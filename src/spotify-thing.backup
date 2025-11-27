@@ -1,0 +1,359 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <Preferences.h>
+#include "esp_random.h"
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+const char* SSID = "Mandage";
+const char* PASSWORD = "strat0sl1ve";
+const char* AUTHKEY = "ohsosecret";
+const char* SPOTNOWP = "https://api.spotify.com/v1/me/player";
+
+Preferences prefs;
+char accesstoken[256];
+char deviceId[40];
+const char* authurl = "https://spotauth-36097512380.europe-west1.run.app/";
+char urlbuffer[512];
+char authHeader[512];
+
+// Global Char Buffers
+char trackName[64] = "No Track";
+char lastTrackName[64] = ""; // To detect changes
+char artistName[64] = "No Artist";
+char albumName[64] = "No Album";
+bool isPlaying = false;
+int progressMS = 0;
+int durationMS = 0;
+char deviceName[64] = "Unknown Device";
+
+// --- DISPLAY LIBRARIES ---
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+
+// --- DISPLAY PINS ---
+#define TFT_CS     15
+#define TFT_DC     21
+#define TFT_RST    4
+// MOSI=23, SCK=18 are default VSPI pins on ESP32
+
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+
+void connect_to_wifi() {
+ WiFi.begin(SSID, PASSWORD);
+ WiFi.setSleep(false);
+     // Display Loading on Screen
+    tft.fillScreen(ILI9341_BLACK);
+    tft.setCursor(10, 120);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setTextSize(2);
+    tft.println("Connecting WiFi...");
+
+ Serial.print("Connecting to WiFi...");
+ while (WiFi.status() != WL_CONNECTED) {
+     delay(1000);
+     Serial.print(".");
+ }
+ Serial.println("\nConnected to WiFi!");
+}
+
+void gen_random_hex(char* buffer, int numBytes) {
+  uint8_t rawBytes[numBytes];
+  esp_fill_random(rawBytes, numBytes); // Hardware RNG
+
+  for (int i = 0; i < numBytes; i++) {
+    // sprintf prints each byte as 2 hex chars into the buffer
+    // buffer + (i * 2) moves the pointer forward by 2 chars each step
+    sprintf(buffer + (i * 2), "%02x", rawBytes[i]);
+  }
+  // Null terminator is added automatically by sprintf, but ensuring it safely:
+  buffer[numBytes * 2] = '\0';
+}
+void updateDisplay() {
+    // Check if track changed to clear screen
+    bool trackChanged = strcmp(trackName, lastTrackName) != 0;
+    
+    if (trackChanged) {
+        tft.fillScreen(ILI9341_BLACK);
+        strlcpy(lastTrackName, trackName, sizeof(lastTrackName));
+        
+        // --- HEADER ---
+        tft.fillRect(0, 0, 240, 30, 0x1DB9); // Spotify Green
+        tft.setCursor(10, 8);
+        tft.setTextColor(ILI9341_BLACK);
+        tft.setTextSize(2);
+        tft.println("NOW PLAYING");
+        
+        // --- TRACK ---
+        tft.setCursor(10, 50);
+        tft.setTextColor(ILI9341_WHITE);
+        tft.setTextSize(2);
+        tft.println(trackName);
+        
+        // --- ARTIST ---
+        tft.setCursor(10, 100);
+        tft.setTextColor(ILI9341_LIGHTGREY);
+        tft.setTextSize(2);
+        tft.println(artistName);
+        
+        // --- ALBUM ---
+        tft.setCursor(10, 140);
+        tft.setTextColor(ILI9341_DARKGREY);
+        tft.setTextSize(1);
+        tft.println(albumName);
+
+        // --- DEVICE ---
+        tft.setCursor(10, 280);
+        tft.setTextColor(0x1DB9); // Green
+        tft.setTextSize(1);
+        tft.print("Device: ");
+        tft.println(deviceName);
+    }
+    
+    // --- DYNAMIC UPDATES (Progress Bar) ---
+    // We redraw this part every time
+    
+    // Draw Progress Bar Background
+    tft.fillRect(10, 200, 220, 10, ILI9341_DARKGREY);
+    
+    // Calculate Width
+    if (durationMS > 0) {
+        int width = map(progressMS, 0, durationMS, 0, 220);
+        tft.fillRect(10, 200, width, 10, 0x1DB9); // Green Progress
+    }
+    
+    // Draw Time Text (Overwrite background to avoid flicker)
+    tft.setCursor(10, 220);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK); // White text, Black bg
+    tft.setTextSize(2);
+    
+    // Format Time 00:00
+    int curMin = progressMS / 60000;
+    int curSec = (progressMS / 1000) % 60;
+    int totMin = durationMS / 60000;
+    int totSec = (durationMS / 1000) % 60;
+    
+    tft.printf("%02d:%02d / %02d:%02d", curMin, curSec, totMin, totSec);
+
+    // Play/Pause Status
+    tft.setCursor(180, 220);
+    if(isPlaying) {
+         tft.print(" > "); 
+    } else {
+         tft.print(" || ");
+    }
+}
+
+boolean refreshAccessToken(const char* baseurl) {
+
+    WiFiClientSecure client; 
+    client.setInsecure();
+    client.setTimeout(10);
+    HTTPClient http;
+    http.setConnectTimeout(10000); // Set HTTP connect timeout to 10 seconds
+
+
+    JsonDocument jsonDoc;
+
+    strlcpy(urlbuffer, authurl, sizeof(urlbuffer));
+    strlcat(urlbuffer, "refresh?deviceId=", sizeof(urlbuffer));
+    strlcat(urlbuffer, deviceId, sizeof(urlbuffer)); 
+    strlcat(urlbuffer, "&authKey=", sizeof(urlbuffer)); 
+    strlcat(urlbuffer, AUTHKEY, sizeof(urlbuffer)); 
+
+    http.begin(client, urlbuffer);
+    http.useHTTP10(true);
+    Serial.print("url: ");Serial.println(urlbuffer);
+    int httpResponseCode = http.GET();
+  
+    if (httpResponseCode==200) {   
+        DeserializationError error = deserializeJson(jsonDoc, http.getStream());
+
+        if (error) {
+            Serial.print("deserializeJson() failed: ");
+            Serial.println(error.c_str());
+            return false;
+        }
+
+    
+    
+         http.end();
+         const char *at = jsonDoc["access_token"];
+         if (at) {
+            strlcpy(accesstoken,at,sizeof(accesstoken));
+            Serial.print("at: ");Serial.println(accesstoken);
+         }
+         
+
+        return true;
+        
+    }
+    else {
+        Serial.printf("return code %i\n", httpResponseCode);
+        return false;
+    }
+
+}
+
+boolean getSpotifyData() {
+  // Serial.println("getspot");
+  boolean success = false;
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setTimeout(10); // Increase timeout to 10 seconds (default is often lower)
+    client.setHandshakeTimeout(30);
+    
+    // For simplicity, we ignore SSL verification. 
+    // For production, use setCACert with Spotify's root certificate.
+    client.setInsecure(); 
+    // client->setCACert(spotify_root_ca);
+
+    HTTPClient http;
+    http.setConnectTimeout(10000); // Set HTTP connect timeout to 10 seconds
+    
+    // 1. useHTTP10(true) is CRITICAL for Spotify to avoid Chunked Encoding errors
+    http.useHTTP10(true);
+    
+    if (http.begin(client, SPOTNOWP)) {
+      
+      // 2. Add Authorization Header
+      strlcpy(authHeader, "Bearer ", sizeof(authHeader));
+      strlcat(authHeader,  accesstoken, sizeof(authHeader));
+      
+      http.addHeader("Authorization", authHeader);
+      // Serial.println(authHeader);
+      int httpCode = http.GET();
+      
+      // Spotify returns 200 if playing, 204 if nothing is playing
+      if (httpCode == 401) {
+        Serial.println("401");
+        success = false;
+      } else if (httpCode == 200) {
+        Stream& responseStream = http.getStream();
+
+        // 3. Create a Filter to save RAM
+        // Spotify JSON is huge (includes available_markets). We filter ONLY what we need.
+        JsonDocument filter;
+        filter["device"]["name"] = true;
+        filter["is_playing"] = true;
+        filter["progress_ms"] = true;
+        filter["item"]["name"] = true;
+        filter["item"]["album"]["name"] = true;
+        filter["item"]["artists"][0]["name"] = true;
+        filter["item"]["duration_ms"] = true;
+        
+        JsonDocument doc;
+        DeserializationError error = deserializeJson(doc, responseStream, DeserializationOption::Filter(filter));
+        
+        if (!error) {
+          // 4. Extract to Char Buffers safely
+          
+          // Use strlcpy for safety (prevents buffer overflow)
+          // Syntax: strlcpy(destination, source, sizeof(destination));
+          const char* tName = doc["item"]["name"];
+          const char* aName = doc["item"]["artists"][0]["name"];
+          const char* alName = doc["item"]["album"]["name"];
+          const char* dName = doc["device"]["name"];
+          progressMS = doc["progress_ms"];
+          durationMS = doc["item"]["duration_ms"];
+          
+          // Handle nulls (in case data is missing)
+          if (tName) strlcpy(trackName, tName, sizeof(trackName));
+          else strlcpy(trackName, "Unknown", sizeof(trackName));
+
+          if (aName) strlcpy(artistName, aName, sizeof(artistName));
+          else strlcpy(artistName, "Unknown", sizeof(artistName));
+
+          if (alName) strlcpy(albumName, alName, sizeof(albumName));
+          else strlcpy(albumName, "Unknown", sizeof(albumName));
+          
+          if (dName) strlcpy(deviceName, dName, sizeof(deviceName));
+          else strlcpy(deviceName, "Unknown Device", sizeof(deviceName));
+
+          isPlaying = doc["is_playing"];
+
+          Serial.println("--- Now Playing ---");
+          Serial.printf("Track: %s\n", trackName);
+          Serial.printf("Device: %s\n", deviceName);
+          Serial.printf("Artist: %s\n", artistName);
+          Serial.printf("Album: %s\n", albumName);
+          Serial.printf("Progress %i:%i / %i:%i\n",progressMS/60000,(progressMS/1000)%60, durationMS/60000, (durationMS/1000)%60);
+          Serial.println(isPlaying?"Playing":"Paused");
+          updateDisplay();
+          success = true;
+        } else {
+          Serial.print("JSON Parse Failed: ");
+          Serial.println(error.c_str());
+        }
+      } else if (httpCode == 204) {
+        Serial.println("Spotify is open, but nothing is playing.");
+        isPlaying = false;
+        success = true;
+      } else {
+        Serial.printf("HTTP Error: %d\n", httpCode);
+        String payload = http.getString(); // Print error message from Spotify
+        Serial.println(payload);
+      }
+      
+      http.end();
+      
+      
+    } else {
+      Serial.println("Unable to connect to Spotify API");
+    }
+  }
+  return success;
+}
+
+void setup() {
+    Serial.begin(115200);
+    tft.begin();
+    tft.setRotation(0); // 0=Portrait, 1=Landscape
+    tft.fillScreen(ILI9341_BLACK);
+    connect_to_wifi();
+    prefs.begin("spothing", false);
+    if (!prefs.isKey("deviceId")) {
+        gen_random_hex(deviceId, 16);
+        Serial.print("deviceId generated: ");Serial.println(deviceId); 
+        prefs.putString("deviceId",deviceId);
+    }
+    else
+    {
+        strlcpy(deviceId, prefs.getString("deviceId").c_str(), sizeof(deviceId));
+    }
+    // if (prefs.getBool("loggedin", false)) {
+    //     return; // start loop
+    // }
+    // else
+    // {
+        strlcpy(urlbuffer, authurl, sizeof(urlbuffer));
+        strlcat(urlbuffer, "login?deviceId=", sizeof(urlbuffer));
+        strlcat(urlbuffer, deviceId, sizeof(urlbuffer));
+        
+        Serial.println(urlbuffer);
+        boolean haveToken = false;
+        while (!haveToken) {
+            //poll
+            Serial.println("polling");
+            haveToken = refreshAccessToken(authurl);
+            if (haveToken) {
+                prefs.putBool("loggedin", true);
+                return;
+            }
+            delay(10000);
+        }
+    }
+// }
+
+void loop() {
+    // Serial.println("loop");
+    if (getSpotifyData()) {
+        // worked
+    }
+    else {
+        refreshAccessToken(authurl);
+    }
+    delay(500);
+}
