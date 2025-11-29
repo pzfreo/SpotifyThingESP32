@@ -1,0 +1,1019 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <Preferences.h>
+#include "esp_random.h"
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <Button2.h>
+#include <WiFiManager.h> // Requires "WiFiManager" by tzapu
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+
+// --- CONFIGURATION ---
+// #define ENABLE_ALBUM_ART // Uncomment to enable Album Art (Requires JPEGDEC library)
+
+#define SPOTIFY_REFRESH_RATE_MS 1000 
+#define AP_NAME "SpotifySetup"
+#define SLEEP_TIMEOUT_MS 300000 // 5 Minutes
+
+// --- DISPLAY LIBRARIES ---
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+#include <QRCode.h>
+
+#ifdef ENABLE_ALBUM_ART
+#include <JPEGDEC.h>     // Requires "JPEGDEC" by Larry Bank
+#endif
+
+// --- DISPLAY PINS ---
+#define TFT_CS     15
+#define TFT_DC     21
+#define TFT_RST    4
+#define TFT_BL     22  // Backlight Pin
+
+// --- BUTTON PINS ---
+#define PIN_PREV   12
+#define PIN_PLAY   13
+#define PIN_NEXT   14
+
+// --- DATA STRUCTURES ---
+struct SpotifyState {
+    char trackName[64];
+    char artistName[64];
+    char albumName[64];
+    char deviceName[64];
+    char trackID[64]; 
+#ifdef ENABLE_ALBUM_ART
+    char imageUrl[256]; 
+#endif
+    bool isPlaying;
+    int progressMS;
+    int durationMS;
+    int volumePercent;
+    bool loggedIn;
+};
+
+// Initialize Display
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+
+#ifdef ENABLE_ALBUM_ART
+JPEGDEC jpeg; 
+uint8_t* jpgBuffer = NULL;
+const size_t JPG_BUFFER_SIZE = 40000; 
+#endif
+
+// Initialize Buttons
+Button2 btnPrev, btnPlay, btnNext;
+
+// Globals
+const char* AUTHKEY = "ohsosecret";
+
+// API Endpoints
+const char* SPOT_PLAYER = "https://api.spotify.com/v1/me/player";
+const char* SPOT_NEXT   = "https://api.spotify.com/v1/me/player/next";
+const char* SPOT_PREV   = "https://api.spotify.com/v1/me/player/previous";
+const char* SPOT_PLAY   = "https://api.spotify.com/v1/me/player/play";
+const char* SPOT_PAUSE  = "https://api.spotify.com/v1/me/player/pause";
+const char* SPOT_VOLUME = "https://api.spotify.com/v1/me/player/volume";
+const char* SPOT_SEEK   = "https://api.spotify.com/v1/me/player/seek";
+const char* SPOT_LIB    = "https://api.spotify.com/v1/me/tracks"; // REPLACED REC WITH LIB
+
+Preferences prefs;
+char accesstoken[512]; 
+char deviceId[40];     
+const char* authurl = "https://spotauth-36097512380.europe-west1.run.app/";
+char urlbuffer[1024];  
+
+// Threading & Synchronization
+SemaphoreHandle_t dataMutex;
+TaskHandle_t spotifyTaskHandle;
+
+// Shared State
+SpotifyState sharedState;
+bool newDataAvailable = false;
+
+// LAST KNOWN ACTIVE DEVICE
+char g_lastSpotifyDeviceID[64] = ""; 
+
+// Command Triggers
+volatile bool triggerNext = false;
+volatile bool triggerPrev = false;
+volatile bool triggerPlay = false;
+volatile bool triggerLike = false; // Changed from Radio to Like
+volatile int  triggerVolumeChange = 0; 
+
+// Display State
+SpotifyState displayState;
+char lastTrackName[64] = ""; 
+char lastDeviceName[64] = ""; 
+int lastVolume = -1;          
+
+#ifdef ENABLE_ALBUM_ART
+char lastImageUrl[256] = "";
+#endif
+
+// Timers
+unsigned long resetComboStartTime = 0;
+bool isResetting = false;
+
+unsigned long logoutStartTime = 0;
+bool isLoggingOut = false;
+
+// Volume Press Timers
+unsigned long nextPressTime = 0;
+unsigned long prevPressTime = 0;
+unsigned long lastVolRepeat = 0;
+
+// Radio/Like Press Timer
+unsigned long playPressTime = 0;
+bool isSavingTrack = false;
+unsigned long feedbackMessageClearTime = 0;
+bool showFeedbackMessage = false;
+
+// Sleep Timer
+unsigned long lastActivityTime = 0;
+bool isSleeping = false;
+
+// Forward Declarations
+void updateDisplay();
+void spotifyTask(void * parameter);
+boolean getSpotifyData();
+void sendSpotifyCommand(const char* method, const char* endpoint);
+void setSpotifyVolume(int percent);
+void saveToLiked();
+boolean refreshAccessToken(char *targetBuffer, const char* baseurl);
+void gen_random_hex(char* buffer, int numBytes);
+void showQRCode(const char* data, const char* title, const char* footer);
+
+#ifdef ENABLE_ALBUM_ART
+void drawAlbumArt(const char* url);
+int JPEGDraw(JPEGDRAW *pDraw);
+#endif
+
+// ================================================================
+// === API IMPLEMENTATION (Moved up for PlatformIO Compatibility) ===
+// ================================================================
+
+boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
+    WiFiClientSecure client;
+    client.setInsecure(); 
+    client.setHandshakeTimeout(30); 
+    HTTPClient http;
+    JsonDocument jsonDoc;
+    strlcpy(urlbuffer, authurl, sizeof(urlbuffer));
+    strlcat(urlbuffer, "refresh?deviceId=", sizeof(urlbuffer));
+    strlcat(urlbuffer, deviceId, sizeof(urlbuffer)); 
+    strlcat(urlbuffer, "&authKey=", sizeof(urlbuffer)); 
+    strlcat(urlbuffer, AUTHKEY, sizeof(urlbuffer)); 
+    http.begin(client, urlbuffer);
+    int httpResponseCode = http.GET();
+    boolean result = false;
+    if (httpResponseCode == 200) {   
+        DeserializationError error = deserializeJson(jsonDoc, http.getStream());
+        if (!error) {
+             const char *newToken = jsonDoc["access_token"];
+             if (newToken) {
+                strlcpy(targetBuffer, newToken, 512); 
+                result = true;
+             }
+        }
+    }
+    http.end();
+    return result;
+}
+
+boolean getSpotifyData() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  WiFiClientSecure client;
+  client.setInsecure(); 
+  client.setHandshakeTimeout(30); 
+  HTTPClient http;
+  http.useHTTP10(true); 
+  
+  if (http.begin(client, SPOT_PLAYER)) {
+      char auth[512];
+      snprintf(auth, sizeof(auth), "Bearer %s", accesstoken);
+      http.addHeader("Authorization", auth);
+      
+      int httpCode = http.GET();
+      
+      // CASE 1: OK (Music Playing/Paused)
+      if (httpCode == 200) {
+          Stream& responseStream = http.getStream();
+          
+          JsonDocument filter;
+          filter["device"]["name"] = true;
+          filter["device"]["id"] = true;
+          filter["device"]["volume_percent"] = true;
+          filter["is_playing"] = true;
+          filter["progress_ms"] = true;
+          filter["item"]["name"] = true;
+          filter["item"]["album"]["name"] = true;
+          filter["item"]["id"] = true; 
+          
+#ifdef ENABLE_ALBUM_ART
+          // FIX: Grab entire images array, don't filter by index [1] directly
+          filter["item"]["album"]["images"] = true; 
+#endif
+          
+          filter["item"]["artists"][0]["name"] = true;
+          filter["item"]["duration_ms"] = true;
+          
+          JsonDocument doc;
+          DeserializationError error = deserializeJson(doc, responseStream, DeserializationOption::Filter(filter));
+          
+          if (!error) {
+              const char* spDevId = doc["device"]["id"];
+              if (spDevId && strlen(spDevId) > 0) {
+                  // FIX: Save Device ID to Prefs if new
+                  if (strcmp(spDevId, g_lastSpotifyDeviceID) != 0) {
+                      strlcpy(g_lastSpotifyDeviceID, spDevId, sizeof(g_lastSpotifyDeviceID));
+                      prefs.putString("savedDevId", g_lastSpotifyDeviceID);
+                      Serial.printf("Saved Device ID: %s\n", g_lastSpotifyDeviceID);
+                  }
+              }
+
+              if (xSemaphoreTake(dataMutex, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+                  const char* tName = doc["item"]["name"];
+                  const char* aName = doc["item"]["artists"][0]["name"];
+                  const char* alName = doc["item"]["album"]["name"];
+                  const char* dName = doc["device"]["name"];
+                  const char* tId = doc["item"]["id"];
+                  
+                  if (tName) strlcpy(sharedState.trackName, tName, 64);
+                  if (aName) strlcpy(sharedState.artistName, aName, 64);
+                  if (alName) strlcpy(sharedState.albumName, alName, 64);
+                  if (dName) strlcpy(sharedState.deviceName, dName, 64);
+                  if (tId) strlcpy(sharedState.trackID, tId, 64);
+                  
+#ifdef ENABLE_ALBUM_ART
+                  // IMAGE SELECTION LOGIC
+                  const char* imgUrl = NULL;
+                  JsonArray images = doc["item"]["album"]["images"];
+                  if (!images.isNull() && images.size() > 0) {
+                      if (images.size() > 1) {
+                          imgUrl = images[1]["url"];
+                      } else {
+                          imgUrl = images[0]["url"];
+                      }
+                  }
+                  
+                  // Update Image URL if found
+                  if (imgUrl) {
+                      if (strcmp(sharedState.imageUrl, imgUrl) != 0) {
+                          Serial.printf("New Art URL Found: %s\n", imgUrl);
+                          strlcpy(sharedState.imageUrl, imgUrl, 256);
+                      }
+                  }
+#endif
+
+                  sharedState.progressMS = doc["progress_ms"];
+                  sharedState.durationMS = doc["item"]["duration_ms"];
+                  sharedState.isPlaying = doc["is_playing"];
+                  sharedState.volumePercent = doc["device"]["volume_percent"];
+                  
+                  newDataAvailable = true;
+                  xSemaphoreGive(dataMutex);
+              }
+              http.end();
+              return true;
+          } else {
+              Serial.print("JSON Error: ");
+              Serial.println(error.c_str());
+          }
+      } 
+      // FIX 2: Handle No Content (No Active Device)
+      else if (httpCode == 204) {
+          if (xSemaphoreTake(dataMutex, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+              strlcpy(sharedState.trackName, "No Active Device", 64);
+              strlcpy(sharedState.artistName, "Tap Play to Wake", 64);
+              strlcpy(sharedState.albumName, "", 64);
+              strlcpy(sharedState.deviceName, "Spotify", 64);
+              sharedState.isPlaying = false;
+              sharedState.durationMS = 0;
+              sharedState.progressMS = 0;
+              newDataAvailable = true;
+              xSemaphoreGive(dataMutex);
+          }
+          http.end();
+          return true;
+      }
+      else if (httpCode == 401) {
+          refreshAccessToken(accesstoken, authurl);
+      }
+      http.end();
+  } 
+  return false;
+}
+
+void setSpotifyVolume(int percent) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    char url[128];
+    snprintf(url, sizeof(url), "%s?volume_percent=%d", SPOT_VOLUME, percent);
+    http.begin(client, url);
+    char auth[512];
+    snprintf(auth, sizeof(auth), "Bearer %s", accesstoken);
+    http.addHeader("Authorization", auth);
+    http.addHeader("Content-Length", "0");
+    int code = http.PUT("");
+    if (code == 401) refreshAccessToken(accesstoken, authurl);
+    http.end();
+}
+
+void sendSpotifyCommand(const char* method, const char* endpoint) {
+    if (WiFi.status() != WL_CONNECTED) return;
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    String requestUrl = String(endpoint);
+    http.begin(client, requestUrl);
+    char auth[512];
+    snprintf(auth, sizeof(auth), "Bearer %s", accesstoken);
+    http.addHeader("Authorization", auth);
+    http.addHeader("Content-Length", "0");
+    
+    int httpCode = 0;
+    if (strcmp(method, "POST") == 0) httpCode = http.POST("");
+    else if (strcmp(method, "PUT") == 0) httpCode = http.PUT("");
+
+    if (httpCode == 401) {
+        if (refreshAccessToken(accesstoken, authurl)) {
+            http.end(); 
+            http.begin(client, requestUrl);
+            snprintf(auth, sizeof(auth), "Bearer %s", accesstoken);
+            http.addHeader("Authorization", auth);
+            http.addHeader("Content-Length", "0");
+            if (strcmp(method, "POST") == 0) httpCode = http.POST("");
+            else if (strcmp(method, "PUT") == 0) httpCode = http.PUT("");
+        }
+    } else if ((httpCode == 404 || httpCode == 403) && strlen(g_lastSpotifyDeviceID) > 0) {
+        if (requestUrl.indexOf('?') == -1) requestUrl += "?device_id=";
+        else requestUrl += "&device_id=";
+        requestUrl += String(g_lastSpotifyDeviceID);
+        http.end();
+        http.begin(client, requestUrl);
+        snprintf(auth, sizeof(auth), "Bearer %s", accesstoken);
+        http.addHeader("Authorization", auth);
+        http.addHeader("Content-Length", "0");
+        if (strcmp(method, "POST") == 0) httpCode = http.POST("");
+        else if (strcmp(method, "PUT") == 0) httpCode = http.PUT("");
+    }
+    http.end();
+}
+
+void saveToLiked() {
+    // 1. Check ID
+    char tid[64];
+    if (xSemaphoreTake(dataMutex, 100) == pdTRUE) {
+        strlcpy(tid, sharedState.trackID, 64);
+        xSemaphoreGive(dataMutex);
+    }
+    
+    if (strlen(tid) < 5) return; 
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    
+    // PUT /v1/me/tracks?ids={id}
+    String url = String(SPOT_LIB) + "?ids=" + String(tid);
+    
+    http.begin(client, url);
+    char auth[512];
+    snprintf(auth, sizeof(auth), "Bearer %s", accesstoken);
+    http.addHeader("Authorization", auth);
+    http.addHeader("Content-Length", "0"); // Empty body PUT
+    
+    int httpCode = http.PUT("");
+    if (httpCode == 200) {
+        Serial.println("Saved to Liked Songs!");
+    } else {
+        Serial.printf("Save Error: %d\n", httpCode);
+        if (httpCode == 401) refreshAccessToken(accesstoken, authurl);
+    }
+    http.end();
+}
+
+// ================================================================
+// ================================================================
+
+// --- WIFI ---
+void configModeCallback(WiFiManager *myWiFiManager) {
+    String qrData = "WIFI:S:" + myWiFiManager->getConfigPortalSSID() + ";T:nopass;;";
+    showQRCode(qrData.c_str(), "Setup WiFi", "Scan to Connect");
+}
+
+void connect_to_wifi() {
+    tft.fillScreen(ILI9341_BLACK);
+    tft.setCursor(10, 100);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setTextSize(2);
+    tft.println("Connecting WiFi...");
+
+    WiFiManager wm;
+    wm.setAPCallback(configModeCallback);
+    if (!wm.autoConnect(AP_NAME)) {
+        ESP.restart();
+        delay(1000);
+    }
+    
+    tft.fillScreen(ILI9341_BLACK);
+    tft.setCursor(10, 100);
+    tft.println("WiFi Connected!");
+    delay(1000);
+}
+
+// --- BUTTONS ---
+// Returns TRUE if we just woke up from sleep (so we can ignore the click action)
+bool wakeUp() {
+    lastActivityTime = millis();
+    if (isSleeping) {
+        isSleeping = false;
+        digitalWrite(TFT_BL, HIGH);
+        // Force redraw
+        lastVolume = -1;
+        lastDeviceName[0] = '\0';
+        updateDisplay(); 
+        return true; 
+    }
+    return false; 
+}
+
+void onPrevClick(Button2& btn) {
+    if (wakeUp()) return; 
+    Serial.println("BTN: PREV");
+    triggerPrev = true; 
+}
+
+void onNextClick(Button2& btn) {
+    if (wakeUp()) return; 
+    Serial.println("BTN: NEXT");
+    triggerNext = true;
+}
+
+void onPlayClick(Button2& btn) {
+    if (wakeUp()) return; 
+    
+    // Only toggle play/pause if we haven't just triggered the Like logic
+    if (!isSavingTrack) {
+        Serial.println("BTN: PLAY/PAUSE");
+        triggerPlay = true;
+        displayState.isPlaying = !displayState.isPlaying;
+        updateDisplay(); 
+    }
+    isSavingTrack = false; 
+}
+
+// --- SETUP ---
+void setup() {
+    Serial.begin(115200);
+    
+#ifdef ENABLE_ALBUM_ART
+    setCpuFrequencyMhz(240); // Max speed for JPEG
+#else
+    setCpuFrequencyMhz(160); // Standard speed
+#endif
+
+    // 1. Init Hardware
+    pinMode(TFT_BL, OUTPUT);
+    digitalWrite(TFT_BL, HIGH); 
+
+    tft.begin();
+    tft.setRotation(1); // LANDSCAPE
+    tft.fillScreen(ILI9341_BLACK);
+    tft.setTextWrap(false); 
+    
+#ifdef ENABLE_ALBUM_ART
+    jpgBuffer = (uint8_t*)malloc(JPG_BUFFER_SIZE);
+#endif
+
+    dataMutex = xSemaphoreCreateMutex();
+
+    // Setup Buttons
+    btnPrev.begin(PIN_PREV);
+    btnPrev.setTapHandler(onPrevClick);
+    btnPrev.setLongClickTime(500); 
+
+    btnPlay.begin(PIN_PLAY);
+    btnPlay.setTapHandler(onPlayClick);
+    btnPlay.setLongClickTime(1000); 
+
+    btnNext.begin(PIN_NEXT);
+    btnNext.setTapHandler(onNextClick);
+    btnNext.setLongClickTime(500);
+
+    // 2. Connect WiFi
+    connect_to_wifi();
+    WiFi.setSleep(false); 
+
+    prefs.begin("spothing", false);
+
+    // FIX: Load saved Device ID on boot
+    if (prefs.isKey("savedDevId")) {
+        String savedId = prefs.getString("savedDevId");
+        if (savedId.length() > 0) {
+            strlcpy(g_lastSpotifyDeviceID, savedId.c_str(), sizeof(g_lastSpotifyDeviceID));
+            Serial.printf("Loaded Device ID: %s\n", g_lastSpotifyDeviceID);
+        }
+    }
+
+    if (!prefs.isKey("deviceId")) {
+        gen_random_hex(deviceId, 16); 
+        prefs.putString("deviceId", deviceId);
+    } else {
+        strlcpy(deviceId, prefs.getString("deviceId").c_str(), sizeof(deviceId));
+    }
+
+    // Default State
+    strlcpy(sharedState.trackName, "Loading...", 64);
+    strlcpy(sharedState.trackID, "", 64);
+#ifdef ENABLE_ALBUM_ART
+    strlcpy(sharedState.imageUrl, "", 256);
+#endif
+    sharedState.isPlaying = false;
+    sharedState.loggedIn = prefs.getBool("loggedin", false);
+
+    // Initial Token Check
+    if (sharedState.loggedIn) {
+        tft.fillScreen(ILI9341_BLACK);
+        tft.setCursor(10, 100);
+        tft.setTextColor(ILI9341_WHITE);
+        tft.setTextSize(2);
+        tft.println("Connecting to");
+        tft.println("Spotify...");
+
+        if(!refreshAccessToken(accesstoken, authurl)) {
+            sharedState.loggedIn = false;
+            prefs.putBool("loggedin", false);
+        }
+    }
+
+    // Login Flow
+    if (!sharedState.loggedIn) {
+        strlcpy(urlbuffer, authurl, sizeof(urlbuffer));
+        strlcat(urlbuffer, "login?deviceId=", sizeof(urlbuffer));
+        strlcat(urlbuffer, deviceId, sizeof(urlbuffer));
+        showQRCode(urlbuffer, "Scan to Login:", "Waiting for token...");
+        boolean haveToken = false;
+        while (!haveToken) {
+            delay(5000);
+            haveToken = refreshAccessToken(accesstoken, authurl);
+            if (haveToken) {
+                prefs.putBool("loggedin", true);
+                sharedState.loggedIn = true;
+            }
+        }
+        // FIX: Clear screen after login QR to prevent ghosting
+        tft.fillScreen(ILI9341_BLACK);
+    }
+    
+    // 3. Start Background Task
+    xTaskCreatePinnedToCore(spotifyTask, "SpotifyTask", 8192, NULL, 1, &spotifyTaskHandle, 0);
+    
+    lastActivityTime = millis();
+}
+
+// --- MAIN LOOP ---
+void loop() {
+    btnPrev.loop();
+    btnPlay.loop();
+    btnNext.loop();
+
+    unsigned long now = millis();
+
+    // 1. Sleep Logic
+    if (!isSleeping && !displayState.isPlaying && (now - lastActivityTime > SLEEP_TIMEOUT_MS)) {
+        isSleeping = true;
+        digitalWrite(TFT_BL, LOW); 
+        tft.fillScreen(ILI9341_BLACK);
+    }
+
+    // 2. Combo Logic (Prev + Next)
+    if (btnPrev.isPressed() && btnNext.isPressed()) {
+        wakeUp(); 
+        if (!isResetting) {
+            resetComboStartTime = now;
+            isResetting = true;
+        } else {
+            unsigned long heldTime = now - resetComboStartTime;
+            
+            // 2s - 10s: Warning for Logout
+            if (heldTime > 2000 && heldTime < 10000) {
+                 tft.setCursor(40, 220); 
+                 tft.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+                 tft.setTextSize(1);
+                 tft.printf("LOGOUT IN %lu...", (10000 - heldTime)/1000);
+            }
+            // 10s - 20s: Logout Ready / Reset Warning
+            else if (heldTime >= 10000 && heldTime < 20000) {
+                 tft.setCursor(10, 220);
+                 tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
+                 tft.setTextSize(1);
+                 tft.printf("RELEASE TO LOGOUT. RESET IN %lu...", (20000 - heldTime)/1000);
+            }
+            // > 20s: Factory Reset
+            else if (heldTime >= 20000) {
+                tft.fillScreen(ILI9341_RED);
+                tft.setCursor(20, 100);
+                tft.setTextColor(ILI9341_WHITE);
+                tft.setTextSize(2);
+                tft.println("FACTORY RESET!");
+                prefs.clear(); 
+                WiFiManager wm;
+                wm.resetSettings();
+                delay(2000);
+                ESP.restart();
+            }
+        }
+        return; 
+    } else {
+        if (isResetting) {
+             unsigned long totalHold = now - resetComboStartTime;
+             
+             if (totalHold >= 10000 && totalHold < 20000) {
+                tft.fillScreen(ILI9341_ORANGE);
+                tft.setCursor(40, 100);
+                tft.setTextColor(ILI9341_BLACK);
+                tft.setTextSize(2);
+                tft.println("LOGGING OUT...");
+                prefs.putBool("loggedin", false);
+                delay(2000);
+                ESP.restart();
+             } else {
+                 tft.fillRect(0, 220, 320, 20, ILI9341_BLACK); 
+                 updateDisplay(); 
+             }
+        }
+        isResetting = false;
+    }
+
+    // 3. Like Track (Play Long Press > 3s)
+    if (!isResetting && btnPlay.isPressed() && !btnPrev.isPressed() && !btnNext.isPressed()) {
+        if (playPressTime == 0) playPressTime = now;
+        
+        if (!isSavingTrack && (now - playPressTime > 3000)) {
+            isSavingTrack = true; 
+            wakeUp();
+            Serial.println("Saving Track...");
+            
+            // UI Feedback
+            showFeedbackMessage = true;
+            feedbackMessageClearTime = now + 3000;
+            tft.fillRect(40, 80, 240, 60, ILI9341_WHITE);
+            tft.drawRect(40, 80, 240, 60, ILI9341_BLACK);
+            tft.setCursor(55, 100); 
+            tft.setTextColor(ILI9341_BLACK);
+            tft.setTextSize(2);
+            tft.print("SAVED TO LIKED");
+            
+            triggerLike = true; 
+        }
+    } else {
+        playPressTime = 0;
+    }
+    
+    // Clear Feedback Message
+    if (showFeedbackMessage && now > feedbackMessageClearTime) {
+        showFeedbackMessage = false;
+        tft.fillScreen(ILI9341_BLACK);
+        lastTrackName[0] = '\0'; 
+        lastDeviceName[0] = '\0';
+        updateDisplay();
+    }
+
+    // 4. Volume Control
+    if (!isResetting && !btnPlay.isPressed()) {
+        if (btnNext.isPressed()) {
+            if (nextPressTime == 0) nextPressTime = now;
+            if (now - nextPressTime > 800) {
+                if (now - lastVolRepeat > 500) {
+                    triggerVolumeChange = 10;
+                    lastVolRepeat = now;
+                    wakeUp(); 
+                }
+            }
+        } else { nextPressTime = 0; }
+
+        if (btnPrev.isPressed()) {
+            if (prevPressTime == 0) prevPressTime = now;
+            if (now - prevPressTime > 800) {
+                if (now - lastVolRepeat > 500) {
+                    triggerVolumeChange = -10;
+                    lastVolRepeat = now;
+                    wakeUp();
+                }
+            }
+        } else { prevPressTime = 0; }
+    }
+
+    // 5. Check Updates
+    bool shouldRedraw = false;
+    
+#ifdef ENABLE_ALBUM_ART
+    bool newArtAvailable = false;
+    char tempImgUrl[256] = "";
+#endif
+
+    if (xSemaphoreTake(dataMutex, 0) == pdTRUE) {
+        if (newDataAvailable) {
+            memcpy(&displayState, &sharedState, sizeof(SpotifyState));
+            newDataAvailable = false;
+            shouldRedraw = true;
+            
+#ifdef ENABLE_ALBUM_ART
+            if (strcmp(displayState.imageUrl, lastImageUrl) != 0) {
+                 strlcpy(lastImageUrl, displayState.imageUrl, 256);
+                 strlcpy(tempImgUrl, displayState.imageUrl, 256);
+                 newArtAvailable = true;
+            }
+#endif
+        }
+        xSemaphoreGive(dataMutex);
+    }
+
+#ifdef ENABLE_ALBUM_ART
+    if (newArtAvailable && strlen(tempImgUrl) > 5) {
+        tft.fillRect(0, 0, 240, 240, ILI9341_BLACK);
+        drawAlbumArt(tempImgUrl);
+    }
+#endif
+
+    if (shouldRedraw && !isSleeping && !showFeedbackMessage) {
+        updateDisplay();
+    }
+}
+
+// --- BACKGROUND TASK ---
+void spotifyTask(void * parameter) {
+    unsigned long lastUpdate = 0;
+    bool forceUpdate = true;
+
+    for(;;) {
+        if (triggerNext) {
+            sendSpotifyCommand("POST", SPOT_NEXT);
+            triggerNext = false; forceUpdate = true;
+            vTaskDelay(200 / portTICK_PERIOD_MS);
+        }
+        if (triggerPrev) {
+            long estimatedProgress = sharedState.progressMS;
+            if (sharedState.isPlaying) {
+                estimatedProgress += (millis() - lastUpdate);
+            }
+            if (estimatedProgress > 10000) { 
+                char seekUrl[128];
+                snprintf(seekUrl, sizeof(seekUrl), "%s?position_ms=0", SPOT_SEEK);
+                sendSpotifyCommand("PUT", seekUrl);
+            } else {
+                sendSpotifyCommand("POST", SPOT_PREV);
+            }
+            triggerPrev = false; forceUpdate = true;
+            vTaskDelay(200 / portTICK_PERIOD_MS);
+        }
+        if (triggerPlay) {
+            if (sharedState.isPlaying) sendSpotifyCommand("PUT", SPOT_PAUSE);
+            else sendSpotifyCommand("PUT", SPOT_PLAY);
+            triggerPlay = false; forceUpdate = true;
+            vTaskDelay(200 / portTICK_PERIOD_MS);
+        }
+        if (triggerVolumeChange != 0) {
+            int newVol = sharedState.volumePercent + triggerVolumeChange;
+            if (newVol > 100) newVol = 100;
+            if (newVol < 0) newVol = 0;
+            setSpotifyVolume(newVol);
+            triggerVolumeChange = 0;
+        }
+        if (triggerLike) {
+            saveToLiked();
+            triggerLike = false;
+            vTaskDelay(500 / portTICK_PERIOD_MS);
+        }
+
+        unsigned long now = millis();
+        if (forceUpdate || (now - lastUpdate > SPOTIFY_REFRESH_RATE_MS)) {
+            getSpotifyData();
+            lastUpdate = now;
+            forceUpdate = false;
+        }
+        vTaskDelay(50 / portTICK_PERIOD_MS);
+    }
+}
+
+#ifdef ENABLE_ALBUM_ART
+// --- JPEG DRAWING ---
+int JPEGDraw(JPEGDRAW *pDraw) {
+    // Drawn at 0,0 (Left Side)
+    tft.drawRGBBitmap(pDraw->x, pDraw->y, pDraw->pPixels, pDraw->iWidth, pDraw->iHeight);
+    return 1;
+}
+
+void drawAlbumArt(const char* url) {
+    if (WiFi.status() != WL_CONNECTED) return;
+    Serial.printf("Downloading Art: %s\n", url);
+    
+    WiFiClientSecure imgClient;
+    imgClient.setInsecure();
+    HTTPClient imgHttp;
+    
+    if (imgHttp.begin(imgClient, url)) {
+        int httpCode = imgHttp.GET();
+        if (httpCode == 200) {
+            int len = imgHttp.getSize();
+            // Check bounds
+            if (len > 0 && len < JPG_BUFFER_SIZE) {
+                WiFiClient *stream = imgHttp.getStreamPtr();
+                int totalRead = 0;
+                while (imgHttp.connected() && (len > 0 || len == -1)) {
+                    size_t size = stream->available();
+                    if (size) {
+                        int c = stream->readBytes(jpgBuffer + totalRead, ((JPG_BUFFER_SIZE - totalRead) > size ? size : (JPG_BUFFER_SIZE - totalRead)));
+                        totalRead += c;
+                        if (len > 0) len -= c;
+                        if (totalRead >= JPG_BUFFER_SIZE) break;
+                    }
+                    delay(1);
+                }
+
+                if (totalRead > 0) {
+                    if (jpeg.openRAM(jpgBuffer, totalRead, JPEGDraw)) {
+                        // Attempt to fit 240 width
+                        int scale = 0;
+                        if (jpeg.getWidth() > 240) scale = JPEG_SCALE_HALF;
+                        if (jpeg.getWidth() > 480) scale = JPEG_SCALE_QUARTER;
+                        
+                        // Left aligned (x=0)
+                        jpeg.setPixelType(RGB565_BIG_ENDIAN);
+                        jpeg.decode(0, 0, scale); 
+                        jpeg.close();
+                    }
+                }
+            } else {
+                Serial.printf("Image size %d too big for buffer %d\n", len, JPG_BUFFER_SIZE);
+            }
+        }
+        imgHttp.end();
+    }
+}
+#endif
+
+// --- DISPLAY UPDATE ---
+void updateDisplay() {
+    bool trackChanged = strcmp(displayState.trackName, lastTrackName) != 0;
+
+#ifdef ENABLE_ALBUM_ART
+    // --- ART LAYOUT (Landscape) ---
+    // Image is 240x240 on Left. Text Area 80x240 on Right (x=245).
+    
+    // Clear Right Text Area
+    if (trackChanged) {
+        tft.fillRect(240, 0, 80, 240, ILI9341_BLACK);
+        strlcpy(lastTrackName, displayState.trackName, sizeof(lastTrackName));
+        
+        // Track
+        tft.setCursor(245, 10);
+        tft.setTextColor(ILI9341_WHITE);
+        tft.setTextSize(1); // Small font for tight space
+        tft.println(displayState.trackName);
+        
+        // Artist
+        tft.setCursor(245, 50);
+        tft.setTextColor(ILI9341_CYAN);
+        tft.println(displayState.artistName);
+    }
+    
+    // Progress Bar (Vertical on right edge?) or overlay?
+    // Let's do simple overlay on bottom right
+    int barHeight = map(displayState.progressMS, 0, displayState.durationMS, 0, 240);
+    tft.fillRect(315, 240 - barHeight, 5, barHeight, 0x1DB9); 
+    
+    // Play Icon
+    tft.setCursor(260, 200);
+    tft.setTextSize(2);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+    if(displayState.isPlaying) tft.print(" > "); 
+    else tft.print(" || ");
+
+#else
+    // --- TEXT LAYOUT (BIG DISPLAY - LANDSCAPE) ---
+    
+    if (trackChanged) {
+        // Clear top area
+        tft.fillRect(0, 0, 320, 160, ILI9341_BLACK); 
+        
+        strlcpy(lastTrackName, displayState.trackName, sizeof(lastTrackName));
+        
+        // Enable wrap
+        tft.setTextWrap(true);
+
+        // Track Title (Size 2)
+        tft.setCursor(10, 10);
+        tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+        tft.setTextSize(2); 
+        tft.println(displayState.trackName);
+        
+        // Artist Name (Size 2)
+        tft.setCursor(10, 70); // Adjusted Y for tighter landscape height
+        tft.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
+        tft.setTextSize(2);
+        tft.println(displayState.artistName);
+        
+        // Album Name (Size 2)
+        tft.setCursor(10, 115); // Adjusted Y
+        tft.setTextColor(ILI9341_DARKGREY, ILI9341_BLACK);
+        tft.setTextSize(2);
+        tft.println(displayState.albumName);
+        
+        tft.setTextWrap(false); 
+    }
+    
+    // Progress Bar
+    if (displayState.durationMS > 0) {
+        int width = map(displayState.progressMS, 0, displayState.durationMS, 0, 300);
+        tft.fillRect(10, 170, 300, 10, ILI9341_DARKGREY); // Redraw BG
+        tft.fillRect(10, 170, width, 10, 0x1DB9); 
+    }
+    
+    // Time Text
+    tft.setCursor(10, 190);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+    tft.setTextSize(2);
+    
+    int curMin = displayState.progressMS / 60000;
+    int curSec = (displayState.progressMS / 1000) % 60;
+    int totMin = displayState.durationMS / 60000;
+    int totSec = (displayState.durationMS / 1000) % 60;
+    
+    tft.printf("%02d:%02d / %02d:%02d", curMin, curSec, totMin, totSec);
+
+    // Play/Pause Icon
+    tft.setCursor(260, 190); // Moved to right side
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+    if(displayState.isPlaying) {
+         tft.print(" > "); 
+    } else {
+         tft.print(" || ");
+    }
+    
+    // Status Line
+    if (strcmp(displayState.deviceName, lastDeviceName) != 0 || displayState.volumePercent != lastVolume) {
+        strlcpy(lastDeviceName, displayState.deviceName, sizeof(lastDeviceName));
+        lastVolume = displayState.volumePercent;
+        
+        tft.fillRect(0, 215, 320, 20, ILI9341_BLACK); 
+        tft.setCursor(10, 215);
+        tft.setTextColor(0x1DB9, ILI9341_BLACK);
+        tft.setTextSize(1);
+        tft.print(displayState.deviceName);
+        tft.print(" [Vol ");
+        tft.print(displayState.volumePercent);
+        tft.print("%]");
+    }
+#endif
+}
+
+void gen_random_hex(char* buffer, int numBytes) {
+  uint8_t rawBytes[numBytes];
+  esp_fill_random(rawBytes, numBytes); 
+  for (int i = 0; i < numBytes; i++) {
+    sprintf(buffer + (i * 2), "%02x", rawBytes[i]);
+  }
+  buffer[numBytes * 2] = '\0';
+}
+
+void showQRCode(const char* data, const char* title, const char* footer) {
+    tft.fillScreen(ILI9341_BLACK);
+    tft.setCursor(0, 10);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setTextSize(2);
+    tft.println(title);
+    
+    QRCode qrcode;
+    uint8_t qrcodeData[qrcode_getBufferSize(10)];
+    qrcode_initText(&qrcode, qrcodeData, 10, ECC_LOW, data);
+
+    int scale = 3; 
+    int border = 10;
+    
+    // Centering for 320 width
+    int startX = (320 - (qrcode.size * scale)) / 2;
+    int startY = 40;
+
+    tft.fillRect(startX - border, startY - border, (qrcode.size * scale) + (border*2), (qrcode.size * scale) + (border*2), ILI9341_WHITE);
+
+    for (uint8_t y = 0; y < qrcode.size; y++) {
+        for (uint8_t x = 0; x < qrcode.size; x++) {
+            if (qrcode_getModule(&qrcode, x, y)) {
+                tft.fillRect(startX + (x * scale), startY + (y * scale), scale, scale, ILI9341_BLACK);
+            }
+        }
+    }
+    
+    tft.setCursor(10, 220);
+    tft.setTextColor(ILI9341_GREEN);
+    tft.setTextSize(1);
+    tft.println(footer);
+}

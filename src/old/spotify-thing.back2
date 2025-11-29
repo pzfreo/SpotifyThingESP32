@@ -1,0 +1,480 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <Preferences.h>
+#include "esp_random.h"
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <Button2.h> // Requires "Button2" library by Lennart Hennigs
+
+// --- DISPLAY LIBRARIES ---
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+#include <QRCode.h> // Requires "QRCode" library by Richard Moore
+
+// --- DISPLAY PINS ---
+#define TFT_CS     15
+#define TFT_DC     21
+#define TFT_RST    4
+
+// --- BUTTON PINS ---
+#define PIN_PREV   12
+#define PIN_PLAY   13
+#define PIN_NEXT   14
+
+// Initialize Display
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+
+// Initialize Buttons
+Button2 btnPrev, btnPlay, btnNext;
+
+const char* SSID = "Mandage";
+const char* PASSWORD = "strat0sl1ve";
+const char* AUTHKEY = "ohsosecret";
+
+// API Endpoints
+const char* SPOT_PLAYER = "https://api.spotify.com/v1/me/player";
+const char* SPOT_NEXT   = "https://api.spotify.com/v1/me/player/next";
+const char* SPOT_PREV   = "https://api.spotify.com/v1/me/player/previous";
+const char* SPOT_PLAY   = "https://api.spotify.com/v1/me/player/play";
+const char* SPOT_PAUSE  = "https://api.spotify.com/v1/me/player/pause";
+
+Preferences prefs;
+char accesstoken[512]; 
+char deviceId[40];     
+const char* authurl = "https://spotauth-36097512380.europe-west1.run.app/";
+char urlbuffer[1024];  
+char authHeader[1024]; 
+
+// Global Char Buffers
+char trackName[64] = "No Track";
+char lastTrackName[64] = ""; 
+char artistName[64] = "No Artist";
+char albumName[64] = "No Album";
+bool isPlaying = false;
+int progressMS = 0;
+int durationMS = 0;
+char deviceName[64] = "Unknown Device";
+
+// Factory Reset Timer
+unsigned long resetComboStartTime = 0;
+bool isResetting = false;
+
+// Forward Declarations
+void updateDisplay();
+boolean getSpotifyData();
+boolean refreshAccessToken(char *targetBuffer, const char* baseurl);
+
+// --- WIFI CONNECTION ---
+void connect_to_wifi() {
+    WiFi.mode(WIFI_STA); 
+    WiFi.begin(SSID, PASSWORD);
+    WiFi.setSleep(false); // CRITICAL: Keep radio ON to prevent SSL errors
+    
+    tft.fillScreen(ILI9341_BLACK);
+    tft.setCursor(10, 120);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setTextSize(2);
+    tft.println("Connecting WiFi...");
+
+    Serial.print("Connecting to WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println("\nConnected to WiFi!");
+    tft.println("Connected!");
+    delay(1000);
+    tft.fillScreen(ILI9341_BLACK);
+}
+
+// --- HELPER FUNCTIONS ---
+void gen_random_hex(char* buffer, int numBytes) {
+  uint8_t rawBytes[numBytes];
+  esp_fill_random(rawBytes, numBytes); 
+  for (int i = 0; i < numBytes; i++) {
+    sprintf(buffer + (i * 2), "%02x", rawBytes[i]);
+  }
+  buffer[numBytes * 2] = '\0';
+}
+
+// --- SPOTIFY CONTROL COMMANDS ---
+void sendSpotifyCommand(const char* method, const char* endpoint) {
+    if (WiFi.status() != WL_CONNECTED) return;
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    http.begin(client, endpoint);
+    
+    strlcpy(authHeader, "Bearer ", sizeof(authHeader));
+    strlcat(authHeader, accesstoken, sizeof(authHeader));
+    http.addHeader("Authorization", authHeader);
+    http.addHeader("Content-Length", "0"); // Often required for empty POST/PUT
+
+    Serial.printf("Sending %s to %s\n", method, endpoint);
+    
+    int httpCode = 0;
+    if (strcmp(method, "POST") == 0) {
+        httpCode = http.POST("");
+    } else if (strcmp(method, "PUT") == 0) {
+        httpCode = http.PUT("");
+    }
+
+    if (httpCode == 204 || httpCode == 200) {
+        Serial.println("Command Success");
+    } else {
+        Serial.printf("Command Failed: %d\n", httpCode);
+        if (httpCode == 401) {
+             refreshAccessToken(accesstoken, authurl);
+        }
+    }
+    http.end();
+}
+
+// --- BUTTON CALLBACKS ---
+
+void onPrevClick(Button2& btn) {
+    Serial.println("<< PREV");
+    sendSpotifyCommand("POST", SPOT_PREV);
+    // Short delay to allow API to process before we fetch status again
+    delay(100); 
+    getSpotifyData();
+}
+
+void onNextClick(Button2& btn) {
+    Serial.println("NEXT >>");
+    sendSpotifyCommand("POST", SPOT_NEXT);
+    delay(100);
+    getSpotifyData();
+}
+
+void onPlayClick(Button2& btn) {
+    Serial.println("PLAY/PAUSE");
+    if (isPlaying) {
+        sendSpotifyCommand("PUT", SPOT_PAUSE);
+        isPlaying = false; // Optimistic UI update
+    } else {
+        sendSpotifyCommand("PUT", SPOT_PLAY);
+        isPlaying = true;
+    }
+    updateDisplay(); // Update icon immediately
+}
+
+// --- QR CODE ---
+void showQRCode(const char* url) {
+    tft.fillScreen(ILI9341_BLACK);
+    tft.setCursor(0, 10);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setTextSize(2);
+    tft.println("Scan to Login:");
+    
+    QRCode qrcode;
+    uint8_t qrcodeData[qrcode_getBufferSize(10)];
+    qrcode_initText(&qrcode, qrcodeData, 10, ECC_LOW, url);
+
+    int scale = 3; 
+    int border = 10;
+    int startX = (240 - (qrcode.size * scale)) / 2;
+    int startY = 50;
+
+    tft.fillRect(startX - border, startY - border, (qrcode.size * scale) + (border*2), (qrcode.size * scale) + (border*2), ILI9341_WHITE);
+
+    for (uint8_t y = 0; y < qrcode.size; y++) {
+        for (uint8_t x = 0; x < qrcode.size; x++) {
+            if (qrcode_getModule(&qrcode, x, y)) {
+                tft.fillRect(startX + (x * scale), startY + (y * scale), scale, scale, ILI9341_BLACK);
+            }
+        }
+    }
+    
+    tft.setCursor(10, 260);
+    tft.setTextColor(ILI9341_GREEN);
+    tft.setTextSize(1);
+    tft.println("Waiting for token...");
+}
+
+// --- DISPLAY UPDATE ---
+void updateDisplay() {
+    bool trackChanged = strcmp(trackName, lastTrackName) != 0;
+    
+    if (trackChanged) {
+        tft.fillScreen(ILI9341_BLACK);
+        strlcpy(lastTrackName, trackName, sizeof(lastTrackName));
+        
+        // Header
+        tft.fillRect(0, 0, 240, 30, 0x1DB9); 
+        tft.setCursor(10, 8);
+        tft.setTextColor(ILI9341_BLACK);
+        tft.setTextSize(2);
+        tft.println("NOW PLAYING");
+        
+        // Track
+        tft.setCursor(10, 50);
+        tft.setTextColor(ILI9341_WHITE);
+        tft.setTextSize(2);
+        tft.println(trackName);
+        
+        // Artist
+        tft.setCursor(10, 100);
+        tft.setTextColor(ILI9341_LIGHTGREY);
+        tft.setTextSize(2);
+        tft.println(artistName);
+        
+        // Album
+        tft.setCursor(10, 140);
+        tft.setTextColor(ILI9341_DARKGREY);
+        tft.setTextSize(1);
+        tft.println(albumName);
+
+        // Device
+        tft.setCursor(10, 280);
+        tft.setTextColor(0x1DB9); 
+        tft.setTextSize(1);
+        tft.print("Device: ");
+        tft.println(deviceName);
+    }
+    
+    // Progress Bar
+    tft.fillRect(10, 200, 220, 10, ILI9341_DARKGREY);
+    if (durationMS > 0) {
+        int width = map(progressMS, 0, durationMS, 0, 220);
+        tft.fillRect(10, 200, width, 10, 0x1DB9); 
+    }
+    
+    // Time Text
+    tft.setCursor(10, 220);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_BLACK);
+    tft.setTextSize(2);
+    
+    int curMin = progressMS / 60000;
+    int curSec = (progressMS / 1000) % 60;
+    int totMin = durationMS / 60000;
+    int totSec = (durationMS / 1000) % 60;
+    
+    tft.printf("%02d:%02d / %02d:%02d", curMin, curSec, totMin, totSec);
+
+    // Play/Pause Icon
+    tft.setCursor(180, 220);
+    if(isPlaying) {
+         tft.print(" > "); 
+    } else {
+         tft.print(" || ");
+    }
+}
+
+// --- AUTH REFRESH ---
+boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
+    WiFiClientSecure client;
+    client.setInsecure(); 
+    client.setHandshakeTimeout(30); 
+
+    HTTPClient http;
+    JsonDocument jsonDoc;
+
+    strlcpy(urlbuffer, authurl, sizeof(urlbuffer));
+    strlcat(urlbuffer, "refresh?deviceId=", sizeof(urlbuffer));
+    strlcat(urlbuffer, deviceId, sizeof(urlbuffer)); 
+    strlcat(urlbuffer, "&authKey=", sizeof(urlbuffer)); 
+    strlcat(urlbuffer, AUTHKEY, sizeof(urlbuffer)); 
+
+    http.begin(client, urlbuffer);
+    http.useHTTP10(true);
+    
+    if (isPlaying) {
+        tft.fillRect(0, 300, 240, 20, ILI9341_BLACK);
+        tft.setCursor(5, 305);
+        tft.setTextSize(1);
+        tft.setTextColor(ILI9341_ORANGE);
+        tft.print("Refreshing Token...");
+    }
+
+    Serial.print("Refreshing Token: "); Serial.println(urlbuffer);
+    int httpResponseCode = http.GET();
+    boolean result = false;
+
+    if (httpResponseCode == 200) {   
+        DeserializationError error = deserializeJson(jsonDoc, http.getStream());
+        if (!error) {
+             const char *newToken = jsonDoc["access_token"];
+             if (newToken) {
+                strlcpy(targetBuffer, newToken, 512); 
+                Serial.println("Token Refreshed Successfully");
+                result = true;
+             }
+        }
+    }
+    
+    http.end();
+    client.stop();
+    return result;
+}
+
+// --- GET SPOTIFY DATA ---
+boolean getSpotifyData() {
+  boolean success = false;
+  if (WiFi.status() != WL_CONNECTED) {
+      connect_to_wifi();
+      return false;
+  }
+    
+  WiFiClientSecure client;
+  client.setInsecure(); 
+  client.setHandshakeTimeout(30); 
+
+  HTTPClient http;
+  http.useHTTP10(true); 
+  http.setConnectTimeout(5000); 
+  
+  if (http.begin(client, SPOT_PLAYER)) {
+      strlcpy(authHeader, "Bearer ", sizeof(authHeader));
+      strlcat(authHeader,  accesstoken, sizeof(authHeader));
+      http.addHeader("Authorization", authHeader);
+      
+      int httpCode = http.GET();
+      
+      if (httpCode == 200) {
+          Stream& responseStream = http.getStream();
+          
+          JsonDocument filter;
+          filter["device"]["name"] = true;
+          filter["is_playing"] = true;
+          filter["progress_ms"] = true;
+          filter["item"]["name"] = true;
+          filter["item"]["album"]["name"] = true;
+          filter["item"]["artists"][0]["name"] = true;
+          filter["item"]["duration_ms"] = true;
+          
+          JsonDocument doc;
+          DeserializationError error = deserializeJson(doc, responseStream, DeserializationOption::Filter(filter));
+          
+          if (!error) {
+              const char* tName = doc["item"]["name"];
+              const char* aName = doc["item"]["artists"][0]["name"];
+              const char* alName = doc["item"]["album"]["name"];
+              const char* dName = doc["device"]["name"];
+              progressMS = doc["progress_ms"];
+              durationMS = doc["item"]["duration_ms"];
+              
+              if (tName) strlcpy(trackName, tName, sizeof(trackName));
+              else strlcpy(trackName, "Unknown", sizeof(trackName));
+              if (aName) strlcpy(artistName, aName, sizeof(artistName));
+              if (alName) strlcpy(albumName, alName, sizeof(albumName));
+              if (dName) strlcpy(deviceName, dName, sizeof(deviceName));
+
+              isPlaying = doc["is_playing"];
+              
+              updateDisplay();
+              success = true;
+          } 
+      } else if (httpCode == 401) {
+          Serial.println("Token expired.");
+          refreshAccessToken(accesstoken, authurl);
+      }
+      http.end();
+  } 
+  client.stop();
+  return success;
+}
+
+// --- SETUP ---
+void setup() {
+    Serial.begin(115200);
+    setCpuFrequencyMhz(160); 
+
+    // Init Display
+    tft.begin();
+    tft.setRotation(0); 
+    tft.fillScreen(ILI9341_BLACK);
+
+    // --- SETUP BUTTONS ---
+    btnPrev.begin(PIN_PREV);
+    btnPrev.setTapHandler(onPrevClick);
+    
+    btnPlay.begin(PIN_PLAY);
+    btnPlay.setTapHandler(onPlayClick);
+
+    btnNext.begin(PIN_NEXT);
+    btnNext.setTapHandler(onNextClick);
+
+    connect_to_wifi();
+    prefs.begin("spothing", false);
+
+    if (!prefs.isKey("deviceId")) {
+        gen_random_hex(deviceId, 16); 
+        prefs.putString("deviceId", deviceId);
+    } else {
+        strlcpy(deviceId, prefs.getString("deviceId").c_str(), sizeof(deviceId));
+    }
+
+    if (prefs.getBool("loggedin", false)) {
+        if(refreshAccessToken(accesstoken, authurl)) {
+            // Success, do nothing
+        } else {
+            prefs.putBool("loggedin", false);
+        }
+    }
+
+    // Login Flow
+    if (!prefs.getBool("loggedin", false)) {
+        strlcpy(urlbuffer, authurl, sizeof(urlbuffer));
+        strlcat(urlbuffer, "login?deviceId=", sizeof(urlbuffer));
+        strlcat(urlbuffer, deviceId, sizeof(urlbuffer));
+        
+        showQRCode(urlbuffer);
+        
+        boolean haveToken = false;
+        while (!haveToken) {
+            delay(5000);
+            haveToken = refreshAccessToken(accesstoken, authurl);
+            if (haveToken) {
+                prefs.putBool("loggedin", true);
+            }
+        }
+    }
+}
+
+// --- MAIN LOOP ---
+void loop() {
+    // 1. Process Button Events
+    btnPrev.loop();
+    btnPlay.loop();
+    btnNext.loop();
+
+    // 2. Custom Factory Reset Logic (Hold Prev + Next for 10s)
+    if (btnPrev.isPressed() && btnNext.isPressed()) {
+        if (!isResetting) {
+            resetComboStartTime = millis();
+            isResetting = true;
+            Serial.println("Reset Combo Started...");
+        } else {
+            unsigned long heldTime = millis() - resetComboStartTime;
+            
+            // Visual feedback on Serial every second
+            if (heldTime % 1000 == 0) Serial.printf("Holding: %lu/10000 ms\n", heldTime);
+
+            if (heldTime > 10000) {
+                tft.fillScreen(ILI9341_RED);
+                tft.setCursor(20, 120);
+                tft.setTextColor(ILI9341_WHITE);
+                tft.println("FACTORY RESET!");
+                Serial.println("FACTORY RESET TRIGGERED!");
+                
+                prefs.putBool("loggedin", false);
+                delay(1000);
+                ESP.restart();
+            }
+        }
+    } else {
+        isResetting = false;
+    }
+
+    // 3. Update Spotify Data (Non-blocking timer)
+    // We do NOT use delay() here, or buttons will lag.
+    static unsigned long lastUpdate = 0;
+    if (millis() - lastUpdate > 1000) { // Update every 1 second
+        getSpotifyData();
+        lastUpdate = millis();
+    }
+}
