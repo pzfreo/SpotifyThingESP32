@@ -111,7 +111,8 @@ char lastTrackName[128] = "";
 char lastDeviceName[64] = ""; 
 int lastVolume = -1;          
 char lastImageUrl[256] = "";
-bool lastIsPlaying = false; // Track play state for UI updates
+bool lastIsPlaying = false; 
+int lastBarWidth = -1; // FIX: Track bar width to prevent flicker
 
 // Logic Control
 volatile bool triggerNext = false;
@@ -142,7 +143,6 @@ bool showFeedbackMessage = false;
 // ============================================================
 // === FORWARD DECLARATIONS (CRITICAL) ===
 // ============================================================
-// Define ALL functions here so order doesn't matter
 void updateDisplay();
 void drawAlbumArt(const char* url);
 int JPEGDraw(JPEGDRAW *pDraw);
@@ -185,7 +185,8 @@ void clearScreen() {
     lastDeviceName[0] = '\0';
     lastVolume = -1;
     lastImageUrl[0] = '\0';
-    lastIsPlaying = !sharedState.isPlaying; // Force redraw
+    lastIsPlaying = !sharedState.isPlaying; 
+    lastBarWidth = -1; // Reset bar tracker
 }
 
 // JPEG Callback
@@ -324,8 +325,19 @@ void updateDisplay() {
     // Progress Bar (Full width above status bar)
     // Y=276, Height=4
     int barWidth = map(sharedState.progressMS, 0, sharedState.durationMS, 0, 480);
-    tft.fillRect(0, 276, 480, 4, C_GREY);
-    tft.fillRect(0, 276, barWidth, 4, C_GREEN);
+    
+    // FIX: Anti-Flicker Logic (Only draw if width changed)
+    if (barWidth != lastBarWidth) {
+        lastBarWidth = barWidth;
+        
+        // Draw Green part (Active)
+        tft.fillRect(0, 276, barWidth, 4, C_GREEN);
+        
+        // Draw Grey part (Remaining) - side-by-side, no layering
+        if (barWidth < 480) {
+             tft.fillRect(barWidth, 276, 480 - barWidth, 4, C_GREY);
+        }
+    }
     
     // --- STATUS BAR (Y=280 to 320) ---
     bool deviceChanged = (strcmp(sharedState.deviceName, lastDeviceName) != 0);
@@ -352,10 +364,10 @@ void updateDisplay() {
         tft.fillRect(220, 280, 40, 40, C_BLACK);
 
         if(sharedState.isPlaying) {
-            // If Playing -> Show Triangle (State)
+            // Playing -> Show Triangle (State)
             tft.fillTriangle(230, 288, 230, 304, 245, 296, C_GREEN);
         } else {
-            // If Paused -> Show Bars (State)
+            // Paused -> Show Bars (State)
              tft.fillRect(230, 288, 5, 16, C_WHITE);
              tft.fillRect(240, 288, 5, 16, C_WHITE);
         }
@@ -367,18 +379,20 @@ void updateDisplay() {
         strlcpy(lastDeviceName, sharedState.deviceName, sizeof(lastDeviceName));
         lastVolume = sharedState.volumePercent;
 
-        // Use Padding to clear old text without flicker
-        tft.setTextPadding(180); // Width of right area
-        tft.setTextDatum(MR_DATUM); // Align Middle Right
+        // Clear right area
+        tft.fillRect(280, 280, 200, 40, C_BLACK);
         
-        String statusText = String(sharedState.deviceName) + " [" + String(sharedState.volumePercent) + "%]";
-        
+        // Viewport for Device Name (300, 290) Width 170
+        tft.setViewport(300, 290, 170, 30);
+        tft.setCursor(0, 5); // Relative to viewport
+        tft.setTextSize(1); // Small Font for Device Info
         tft.setTextColor(C_WHITE, C_BLACK);
-        tft.drawString(statusText, 470, 300); // Draw at right edge (minus margin)
-        
-        // Reset Datum
-        tft.setTextDatum(TL_DATUM);
-        tft.setTextPadding(0);
+        tft.print(sharedState.deviceName);
+        tft.print(" [");
+        tft.print(sharedState.volumePercent);
+        tft.print("%]");
+        tft.resetViewport();
+        tft.setTextSize(2); // Restore standard size
     }
 
 #else
@@ -419,9 +433,16 @@ void updateDisplay() {
     
     // Progress Bar
     if (sharedState.durationMS > 0) {
-        int width = map(sharedState.progressMS, 0, sharedState.durationMS, 0, 440);
-        tft.fillRect(20, 220, 440, 10, C_GREY); // Redraw BG
-        tft.fillRect(20, 220, width, 10, C_GREEN); 
+        int barWidth = map(sharedState.progressMS, 0, sharedState.durationMS, 0, 440);
+        
+        // FIX: Anti-Flicker for Text Layout
+        if (barWidth != lastBarWidth) {
+            lastBarWidth = barWidth;
+            tft.fillRect(20, 220, barWidth, 10, C_GREEN); 
+            if (barWidth < 440) {
+                tft.fillRect(20 + barWidth, 220, 440 - barWidth, 10, C_GREY); 
+            }
+        }
     }
     
     // Status Bar Logic
@@ -440,8 +461,10 @@ void updateDisplay() {
         // Play/Pause Icon
         tft.fillRect(400, 230, 40, 30, C_BLACK);
         if(sharedState.isPlaying) {
+             // Play Triangle
              tft.fillTriangle(400, 240, 400, 256, 415, 248, C_GREEN);
         } else {
+             // Pause Bars
              tft.fillRect(400, 240, 5, 16, C_WHITE);
              tft.fillRect(410, 240, 5, 16, C_WHITE);
         }
@@ -457,8 +480,9 @@ void updateDisplay() {
         // Viewport for Device (Text Layout)
         tft.setViewport(20, 270, 360, 20);
         tft.setCursor(0, 5); 
-        tft.setTextColor(C_WHITE, C_BLACK);
+        // FIX: Font Size 1
         tft.setTextSize(1);
+        tft.setTextColor(C_WHITE, C_BLACK);
         tft.print(sharedState.deviceName);
         tft.print(" [Vol ");
         tft.print(sharedState.volumePercent);
