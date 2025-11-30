@@ -8,8 +8,17 @@ from ocp_vscode import show, set_port, set_defaults
 # Dimensions
 wall_th = 2.0
 floor_th = 2.0
-fascia_th = 3.0 
+fascia_th = 4.0  # 4mm Lid
 internal_height = 45.0 
+
+# SCREW SETTINGS (5mm Head)
+screw_shaft_dia = 3.0  
+screw_head_dia = 5.0   
+screw_clearance = 0.4  
+cb_depth = 1.5         
+
+cb_radius = (screw_head_dia + screw_clearance) / 2 # ~2.7mm
+shaft_radius = screw_shaft_dia / 2                 # 1.5mm
 
 # Component Dimensions
 disp_pcb_w, disp_pcb_h = 108.0, 62.0
@@ -19,7 +28,8 @@ disp_scr_th = 4.0
 disp_offset_y = 10.0 
 
 # PIN MOUNT STRATEGY (Shoulder + Pin)
-pcb_recess_from_rim = disp_scr_th - fascia_th # 1.0mm
+# Screen Th (4.0) - Fascia Th (4.0) = 0.0 (Flush Fit)
+pcb_recess_from_rim = disp_scr_th - fascia_th 
 standoff_shoulder_z = internal_height - pcb_recess_from_rim - disp_pcb_th
 pin_dia = 2.8
 pin_rad = pin_dia / 2
@@ -77,7 +87,6 @@ with BuildPart() as ghost_esp_bp:
 ghost_esp = ghost_esp_bp.part
 
 # --- RIGHT SIDE LAYOUT ---
-# ADJUSTMENT: Pushed out to 48.0mm to increase aerial gap
 right_col_x = 48.0
 
 # D. USB-C Trigger (Right Wall - Top)
@@ -139,15 +148,13 @@ dx, dy = disp_pcb_w/2 - 3, disp_pcb_h/2 - 3
 for x in [-dx, dx]:
     for y in [-dy, dy]:
         with BuildPart() as p_bp:
-            # Shoulder
             Cylinder(radius=3.0, height=standoff_shoulder_z, align=(Align.CENTER, Align.CENTER, Align.MIN))
-            # Pin
             with Locations((0,0, standoff_shoulder_z)):
                 Cylinder(radius=pin_rad, height=pin_height, align=(Align.CENTER, Align.CENTER, Align.MIN))
         disp_mounts += p_bp.part.move(Location((x, y + disp_offset_y, floor_th)))
 case_box += disp_mounts
 
-# 2. ESP32 Corners (Aerial Cutout)
+# 2. ESP32 Corners
 esp_fence_block = Box(esp_w + 3, esp_h + 3, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))
 esp_void = Box(esp_w, esp_h, 7, align=(Align.CENTER, Align.CENTER, Align.MIN))
 cut_bar_w = Box(esp_w + 20, esp_h - 10, 10, align=(Align.CENTER, Align.CENTER, Align.MIN))
@@ -156,13 +163,13 @@ aerial_cut = Box(10, 20, 10, align=(Align.CENTER, Align.CENTER, Align.MIN)).move
 esp_mount = (esp_fence_block - esp_void - cut_bar_w - cut_bar_h - aerial_cut).move(esp_loc)
 case_box += esp_mount
 
-# 3. DRV8833 Mount (Right Side)
+# 3. DRV8833 Mount
 drv_wall = Box(drv_w + 3, drv_h + 3, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))
 drv_void = Box(drv_w, drv_h, 7, align=(Align.CENTER, Align.CENTER, Align.MIN))
 drv_mount = (drv_wall - drv_void).move(drv_loc)
 case_box += drv_mount
 
-# 4. USB-C Fence (Right Side)
+# 4. USB-C Fence
 usb_outer = Box(usb_len + 3, usb_wid + 3, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))
 usb_inner = Box(usb_len, usb_wid, 7, align=(Align.CENTER, Align.CENTER, Align.MIN))
 usb_conn_cut = Box(5, usb_wid, 10, align=(Align.CENTER, Align.CENTER, Align.MIN)).move(Location((usb_len/2, 0, 0)))
@@ -170,7 +177,7 @@ usb_mount = (usb_outer - usb_inner - usb_conn_cut).move(usb_loc)
 case_box += usb_mount
 
 # --- D. Cutouts ---
-# USB Hole (Standard Capsule Shape)
+# USB Hole
 usb_hole_z = 5.2 
 with BuildPart() as usb_cutter_bp:
     with BuildSketch(Plane.YZ) as sk_usb:
@@ -190,11 +197,12 @@ with BuildPart() as fascia_bp:
         fillet(sk_fascia.vertices(), radius=6)
     extrude(amount=fascia_th)
     
-    # 1. Main Screws
+    # 1. Main Screws (FIXED LOCATION Z)
+    # Move location to TOP Face (Z = fascia_th) so it cuts downwards correctly
     for x in [-px, px]:
         for y in [-py, py]:
-            with Locations((x,y)):
-                CounterBoreHole(radius=1.6, counter_bore_radius=3.0, counter_bore_depth=1.5)
+            with Locations((x, y, fascia_th)): # <--- THIS WAS THE FIX
+                CounterBoreHole(radius=shaft_radius, counter_bore_radius=cb_radius, counter_bore_depth=cb_depth)
 
     # 2. Display Cutout
     with Locations((0, disp_offset_y)):
@@ -205,10 +213,9 @@ with BuildPart() as fascia_bp:
         with Locations([(-btn_spacing, 0), (0,0), (btn_spacing, 0)]):
             Hole(radius=btn_dia/2)
             
-    # 4. Alignment Traps (Blind holes for Pins)
+    # 4. Alignment Traps
     with Locations((0, disp_offset_y)):
         with Locations([(x, y) for x in [-dx, dx] for y in [-dy, dy]]):
-            # Blind cut from bottom
             Cylinder(radius=3.0/2, height=1.0, align=(Align.CENTER, Align.CENTER, Align.MIN), mode=Mode.SUBTRACT)
 
 fascia = fascia_bp.part
@@ -235,4 +242,4 @@ try:
 except Exception as e:
     print(f"Viewer Error: {e}")
 
-print("Done.")
+print("Done.")     
