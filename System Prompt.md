@@ -1,77 +1,94 @@
-Role: You are an expert Computational Geometry Engineer specialized in build123d. Task: Generate a Python script to design a two-part 3D printable enclosure (Body + Fascia Lid) for an ESP32 electronics project.
+Master Engineering Prompt: ESP32 Case Project
+Role: Act as a Senior Mechanical Design Engineer. Write a Python script using the build123d library to generate a parametric 3D printable enclosure (Body + Fascia Lid).
 
-Libraries & Constraints:
+1. Library & Environment Constraints
 
-Use build123d (Algebra Mode preferred).
+Library: build123d (Algebra mode preferred).
 
-Use ocp_vscode for visualization (show Body, Lid, and Electronics "Ghosts").
+Visualizer: ocp_vscode (Show Body, Lid, and transparent "Ghost" electronics).
 
-Coordinate System: Z-up. Center components on (0,0) where appropriate.
+Orientation: Z-up. Center components relative to Origin (0,0).
 
-Export: case_body.stl and fascia_lid.stl.
+Output: Export case_body.stl and fascia_lid.stl.
 
-1. Component Dimensions:
+2. Global Case Settings
 
-Display: PCB 108x62x1.7mm. Screen (centered on PCB) 95x62x4mm.
+Walls/Floor: 2.0mm thickness.
 
-Buttons: 3x Tactile buttons. Shaft 7mm dia. Body 12mm dia x 20mm depth. Spacing 18mm.
+Fascia (Lid): 4.0mm thickness (increased for robust screw seating).
 
-ESP32 Board: 51x28mm body. Aerial extension 7mm long x 18mm wide.
+Internal Height: 45.0mm (to accommodate stacked components).
 
-USB-C Trigger Board: 28mm (L) x 11mm (W) x 4.5mm (H).
+Fit Tolerance: 0.6mm (0.3mm gap per side) applied to all internal PCB holders.
 
-DRV8833 Module: 18.5mm x 16.0mm.
+3. Component Dimensions (The "Ghosts")
 
-2. Layout Strategy:
+Display: PCB 108x62x1.7mm. Screen glass 95x62x4mm (Centered on PCB).
 
-Case Dimensions: Derived automatically from bounding box of "Ghost" components + 2mm walls + 6mm padding. Internal Height = 45mm.
+Buttons: 3x Tactile. Cap 7mm dia. Body 12mm dia x 20mm depth. Spacing 18mm.
 
-Top Face (Fascia): Holds Display and Buttons.
+ESP32: Body 51x28mm. Aerial extension 7mm(L) x 18mm(W).
 
-Internal Bottom Center: ESP32. Orientation: Rotated so Aerial points RIGHT.
+USB-C Trigger: 28mm(L) x 11mm(W) x 4.5mm(H). Connector bottom is 3.6mm from floor.
 
-Internal Right Wall: Stacked vertically.
+DRV8833 Driver: 18.5mm(W) x 21.0mm(L).
 
-Top: USB-C Trigger (Connector facing right wall).
+4. Layout Strategy
 
-Bottom: DRV8833 Module.
+Display: Top center (Y offset +10mm).
 
-Constraint: Ensure ~5mm clearance between ESP32 aerial tip and these modules.
+Buttons: Centered row below the display.
 
-Internal Left Wall: EMPTY (Reserved for USB cable access to ESP32).
+ESP32: Bottom Center (Y = -35). Rotated 180° so aerial points RIGHT.
 
-3. Mounting Logic (Critical):
+Right Wall Column:
 
-Display (Flush Fit): Use a "Shoulder & Pin" strategy.
+Top: USB-C Trigger.
 
-Shoulder: 6mm dia post. Height calculated so the top of the Screen Glass is perfectly flush with the top of the Fascia (Lid).
+Bottom: DRV8833 (Shifted to Y = -39 to avoid collision with display posts).
 
-Pin: 2.8mm dia, extends 2.0mm above the shoulder to pass through PCB.
+X-Position: X = 48.0mm (Ensures clearance for ESP32 aerial).
 
-Fascia Trap: Underside of Fascia must have blind 3.0mm holes to capture these pins for alignment.
+Left Wall: Completely empty (Reserved for USB cable access to ESP32).
 
-PCBs (ESP32, USB, DRV8833): Use "Fence" mounts (No screws).
+5. Mounting Logic (Critical Engineering Features)
 
-6mm high walls around the PCB perimeter.
+Display "Lighthouse" Standoffs:
 
-ESP32 Fence must have a cutout on the Right wall for the Aerial.
+Base: Conical, tapering from 12mm dia (floor) to 6mm dia (shoulder).
 
-USB Fence must have a cutout on the Right wall for the Connector.
+Shoulder Height: Calculated so Screen Glass is flush with the top of the 4mm Lid.
 
-Case Assembly:
+Pins: 2.0mm diameter (undersized for "Float/Tolerance").
 
-4x Corner Posts with 2.8mm holes (for M3 self-tapping screws).
+Mounting Holes: Located 3.0mm from Long Edge (X) and 3.5mm from Short Edge (Y).
 
-Fascia has M3 Countersunk/Counterbored clearance holes.
+PCB "Fences":
 
-4. External Cutouts:
+Use 6mm high walls to hold ESP32, USB, and DRV8833 boards friction-fit.
 
-Fascia: Cutouts for Screen and 3 Buttons (mounted below screen).
+ESP32: Must have cutout on Right wall for Aerial.
 
-Right Wall: USB-C Port hole for Trigger board.
+USB Trigger: Must have cutout on Right wall for Connector.
 
-Shape: Stadium/Capsule (9.5mm x 4.0mm).
+Lid Alignment:
 
-Alignment: Aligned with USB-C board sitting flat on the floor (Z ~ 5.2mm center).
+Fascia underside must have blind "Trap" holes (3.0mm dia) to capture the Display Pins.
 
-Deliverables: Provide the complete, error-free Python code. Ensure the "Ghosts" are generated first to drive the case dimensions.
+6. Assembly & Cutouts
+
+Main Screws: 4x Corner posts.
+
+Screw Type: M3 with 5.0mm Head.
+
+Lid Holes: Counterbored.
+
+Counterbore: 1.5mm deep (leaving 2.5mm solid shelf).
+
+External USB-C Access:
+
+Right wall hole for Trigger board.
+
+Size: 10.0mm x 4.5mm (Stadium shape, includes print tolerance).
+
+Alignment: Z-height derived from floor + 3.6mm connector offset.

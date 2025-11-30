@@ -8,8 +8,11 @@ from ocp_vscode import show, set_port, set_defaults
 # Dimensions
 wall_th = 2.0
 floor_th = 2.0
-fascia_th = 4.0  # 4mm Lid
+fascia_th = 4.0 
 internal_height = 45.0 
+
+# TOLERANCE SETTINGS
+fit_tolerance = 0.6 
 
 # SCREW SETTINGS (5mm Head)
 screw_shaft_dia = 3.0  
@@ -17,8 +20,8 @@ screw_head_dia = 5.0
 screw_clearance = 0.4  
 cb_depth = 1.5         
 
-cb_radius = (screw_head_dia + screw_clearance) / 2 # ~2.7mm
-shaft_radius = screw_shaft_dia / 2                 # 1.5mm
+cb_radius = (screw_head_dia + screw_clearance) / 2
+shaft_radius = screw_shaft_dia / 2
 
 # Component Dimensions
 disp_pcb_w, disp_pcb_h = 108.0, 62.0
@@ -27,11 +30,10 @@ disp_pcb_th = 1.7
 disp_scr_th = 4.0
 disp_offset_y = 10.0 
 
-# PIN MOUNT STRATEGY (Shoulder + Pin)
-# Screen Th (4.0) - Fascia Th (4.0) = 0.0 (Flush Fit)
+# PIN MOUNT STRATEGY (Float)
 pcb_recess_from_rim = disp_scr_th - fascia_th 
 standoff_shoulder_z = internal_height - pcb_recess_from_rim - disp_pcb_th
-pin_dia = 2.8
+pin_dia = 2.0 
 pin_rad = pin_dia / 2
 pin_height = 2.0 
 
@@ -50,9 +52,11 @@ usb_len = 28.0
 usb_wid = 11.0 
 usb_h_total = 4.5
 usb_recess = 3.0 
+usb_conn_bottom_h = 3.6
 
-# DRV8833 Module
-drv_w, drv_h = 18.5, 16.0 
+# DRV8833
+drv_w = 18.5
+drv_h = 21.0 
 
 # ==============================================================================
 # 2. Layout & Ghosts
@@ -76,7 +80,7 @@ for i in [-1, 0, 1]:
     ghost_btns += Cylinder(radius=btn_dia/2, height=10, align=(Align.CENTER, Align.CENTER, Align.MIN)).move(loc)
     ghost_btns += Cylinder(radius=btn_body_dia/2, height=btn_depth, align=(Align.CENTER, Align.CENTER, Align.MAX)).move(loc)
 
-# C. ESP32 (Bottom Center - Aerial Right)
+# C. ESP32
 esp_y = -35 
 esp_loc = Location((0, esp_y, floor_th))
 with BuildPart() as ghost_esp_bp:
@@ -89,16 +93,17 @@ ghost_esp = ghost_esp_bp.part
 # --- RIGHT SIDE LAYOUT ---
 right_col_x = 48.0
 
-# D. USB-C Trigger (Right Wall - Top)
+# D. USB-C Trigger
 padding = 6.0
 calc_case_w = max(disp_pcb_w, (right_col_x + 15)*2) + padding*2 + wall_th*2
 ext_wall_x = calc_case_w / 2
 usb_x_pos = ext_wall_x - usb_recess - (usb_len / 2)
-usb_loc = Location((usb_x_pos, 0, floor_th)) 
+usb_loc = Location((usb_x_pos, 0, floor_th + (usb_conn_bottom_h/2))) 
 ghost_usb = Box(usb_len, usb_wid, usb_h_total, align=(Align.CENTER, Align.CENTER, Align.MIN)).move(usb_loc)
 
-# E. DRV8833 (Right Wall - Bottom)
-drv_loc = Location((right_col_x, -35, floor_th))
+# E. DRV8833 (MOVED DOWN TO AVOID CONE COLLISION)
+# Old Y: -35. New Y: -39.
+drv_loc = Location((right_col_x, -39, floor_th))
 ghost_drv = Box(drv_w, drv_h, 5, align=(Align.CENTER, Align.CENTER, Align.MIN)).move(drv_loc)
 
 ghosts = ghost_display + ghost_btns + ghost_esp + ghost_usb + ghost_drv
@@ -142,21 +147,26 @@ case_box += posts
 
 # --- C. Internal Mounts ---
 
-# 1. Display Standoffs (Shoulder + Pin)
+# 1. Display Standoffs
 disp_mounts = Part()
-dx, dy = disp_pcb_w/2 - 3, disp_pcb_h/2 - 3 
+# Logic: 3.0mm from X-edges (Long), 3.5mm from Y-edges (Short)
+dx = disp_pcb_w/2 - 3.0
+dy = disp_pcb_h/2 - 3.5
+
 for x in [-dx, dx]:
     for y in [-dy, dy]:
         with BuildPart() as p_bp:
-            Cylinder(radius=3.0, height=standoff_shoulder_z, align=(Align.CENTER, Align.CENTER, Align.MIN))
+            # Cone Base
+            Cone(bottom_radius=6.0, top_radius=3.0, height=standoff_shoulder_z, align=(Align.CENTER, Align.CENTER, Align.MIN))
+            # Pin
             with Locations((0,0, standoff_shoulder_z)):
                 Cylinder(radius=pin_rad, height=pin_height, align=(Align.CENTER, Align.CENTER, Align.MIN))
         disp_mounts += p_bp.part.move(Location((x, y + disp_offset_y, floor_th)))
 case_box += disp_mounts
 
 # 2. ESP32 Corners
-esp_fence_block = Box(esp_w + 3, esp_h + 3, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))
-esp_void = Box(esp_w, esp_h, 7, align=(Align.CENTER, Align.CENTER, Align.MIN))
+esp_fence_block = Box(esp_w + fit_tolerance + 3, esp_h + fit_tolerance + 3, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))
+esp_void = Box(esp_w + fit_tolerance, esp_h + fit_tolerance, 7, align=(Align.CENTER, Align.CENTER, Align.MIN))
 cut_bar_w = Box(esp_w + 20, esp_h - 10, 10, align=(Align.CENTER, Align.CENTER, Align.MIN))
 cut_bar_h = Box(esp_w - 10, esp_h + 20, 10, align=(Align.CENTER, Align.CENTER, Align.MIN))
 aerial_cut = Box(10, 20, 10, align=(Align.CENTER, Align.CENTER, Align.MIN)).move(Location((esp_w/2, 0, 0)))
@@ -164,25 +174,30 @@ esp_mount = (esp_fence_block - esp_void - cut_bar_w - cut_bar_h - aerial_cut).mo
 case_box += esp_mount
 
 # 3. DRV8833 Mount
-drv_wall = Box(drv_w + 3, drv_h + 3, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))
-drv_void = Box(drv_w, drv_h, 7, align=(Align.CENTER, Align.CENTER, Align.MIN))
+drv_wall = Box(drv_w + fit_tolerance + 3, drv_h + fit_tolerance + 3, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))
+drv_void = Box(drv_w + fit_tolerance, drv_h + fit_tolerance, 7, align=(Align.CENTER, Align.CENTER, Align.MIN))
 drv_mount = (drv_wall - drv_void).move(drv_loc)
 case_box += drv_mount
 
 # 4. USB-C Fence
-usb_outer = Box(usb_len + 3, usb_wid + 3, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))
-usb_inner = Box(usb_len, usb_wid, 7, align=(Align.CENTER, Align.CENTER, Align.MIN))
+usb_outer = Box(usb_len + fit_tolerance + 3, usb_wid + fit_tolerance + 3, 6, align=(Align.CENTER, Align.CENTER, Align.MIN))
+usb_inner = Box(usb_len + fit_tolerance, usb_wid + fit_tolerance, 7, align=(Align.CENTER, Align.CENTER, Align.MIN))
 usb_conn_cut = Box(5, usb_wid, 10, align=(Align.CENTER, Align.CENTER, Align.MIN)).move(Location((usb_len/2, 0, 0)))
 usb_mount = (usb_outer - usb_inner - usb_conn_cut).move(usb_loc)
 case_box += usb_mount
 
 # --- D. Cutouts ---
-# USB Hole
-usb_hole_z = 5.2 
+# USB Hole (10.0 x 4.5mm)
+usb_hole_w = 10.0
+usb_hole_h = 4.5
+usb_hole_fillet = usb_hole_h / 2
+# Center aligned such that bottom edge is 0.2mm below connector
+usb_hole_z = floor_th + usb_conn_bottom_h - 0.2 + (usb_hole_h / 2)
+
 with BuildPart() as usb_cutter_bp:
     with BuildSketch(Plane.YZ) as sk_usb:
-        Rectangle(9.5, 4.0) 
-        fillet(sk_usb.vertices(), radius=2.0) 
+        Rectangle(usb_hole_w, usb_hole_h) 
+        fillet(sk_usb.vertices(), radius=usb_hole_fillet) 
     extrude(amount=20, both=True)
 usb_hole = usb_cutter_bp.part.move(Location((case_w/2, usb_loc.position.Y, usb_hole_z)))
 case_box -= usb_hole
@@ -197,11 +212,10 @@ with BuildPart() as fascia_bp:
         fillet(sk_fascia.vertices(), radius=6)
     extrude(amount=fascia_th)
     
-    # 1. Main Screws (FIXED LOCATION Z)
-    # Move location to TOP Face (Z = fascia_th) so it cuts downwards correctly
+    # 1. Main Screws
     for x in [-px, px]:
         for y in [-py, py]:
-            with Locations((x, y, fascia_th)): # <--- THIS WAS THE FIX
+            with Locations((x, y, fascia_th)): 
                 CounterBoreHole(radius=shaft_radius, counter_bore_radius=cb_radius, counter_bore_depth=cb_depth)
 
     # 2. Display Cutout
@@ -242,4 +256,4 @@ try:
 except Exception as e:
     print(f"Viewer Error: {e}")
 
-print("Done.")     
+print("Done.")
