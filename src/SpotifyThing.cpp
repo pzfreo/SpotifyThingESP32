@@ -43,8 +43,6 @@
 // --- MEMORY ---
 #define JPG_BUFFER_SIZE 60000
 
-// --- AUTH ---
-#define AUTHKEY "ohsosecret"
 
 // --- API ENDPOINTS ---
 const char* SPOT_PLAYER = "https://api.spotify.com/v1/me/player";
