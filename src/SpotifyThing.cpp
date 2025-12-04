@@ -111,18 +111,20 @@ char lastDeviceName[64] = "";
 int lastVolume = -1;          
 char lastImageUrl[256] = "";
 bool lastIsPlaying = false; 
-int lastBarWidth = -1; // FIX: Track bar width to prevent flicker
+int lastBarWidth = -1; 
 
 // Logic Control
+// FIX: Added 'volatile' to thread-shared flags
 volatile bool triggerNext = false;
 volatile bool triggerPrev = false;
 volatile bool triggerPlay = false;
 volatile bool triggerLike = false;
 volatile int  triggerVolumeChange = 0;
-volatile bool triggerRefresh = false; // --- FIX: Added trigger for immediate wake updates ---
+volatile bool triggerRefresh = false; // Triggers immediate API poll
 
 unsigned long lastActivityTime = 0;
-bool isSleeping = false;
+// FIX: Added 'volatile' because Core 0 reads this while Core 1 writes it
+volatile bool isSleeping = false; 
 
 // Timers
 unsigned long resetComboStartTime = 0;
@@ -326,14 +328,12 @@ void updateDisplay() {
     // Y=276, Height=4
     int barWidth = map(sharedState.progressMS, 0, sharedState.durationMS, 0, 480);
     
-    // FIX: Anti-Flicker Logic (Only draw if width changed)
+    // Anti-Flicker Logic (Only draw if width changed)
     if (barWidth != lastBarWidth) {
         lastBarWidth = barWidth;
-        
         // Draw Green part (Active)
         tft.fillRect(0, 276, barWidth, 4, C_GREEN);
-        
-        // Draw Grey part (Remaining) - side-by-side, no layering
+        // Draw Grey part (Remaining)
         if (barWidth < 480) {
              tft.fillRect(barWidth, 276, 480 - barWidth, 4, C_GREY);
         }
@@ -435,7 +435,7 @@ void updateDisplay() {
     if (sharedState.durationMS > 0) {
         int barWidth = map(sharedState.progressMS, 0, sharedState.durationMS, 0, 440);
         
-        // FIX: Anti-Flicker for Text Layout
+        // Anti-Flicker for Text Layout
         if (barWidth != lastBarWidth) {
             lastBarWidth = barWidth;
             tft.fillRect(20, 220, barWidth, 10, C_GREEN); 
@@ -480,7 +480,6 @@ void updateDisplay() {
         // Viewport for Device (Text Layout)
         tft.setViewport(20, 270, 360, 20);
         tft.setCursor(0, 5); 
-        // FIX: Font Size 1
         tft.setTextSize(1);
         tft.setTextColor(C_WHITE, C_BLACK);
         tft.print(sharedState.deviceName);
@@ -502,7 +501,7 @@ bool wakeUp() {
         clearScreen();
         
         // 1. Force the Main Loop to redraw current memory (Text AND Art)
-        // This ensures the user sees something immediately
+        // This ensures the user sees something immediately from cache
         if (xSemaphoreTake(dataMutex, 10) == pdTRUE) {
             newDataAvailable = true; 
             xSemaphoreGive(dataMutex);
@@ -854,14 +853,16 @@ void spotifyTask(void * parameter) {
 
         // 2. Poll Data
         unsigned long now = millis();
-        if (forceUpdate || (now - lastUpdate > SPOTIFY_REFRESH_RATE_MS)) {
+        // --- FIX: Only poll if forced (waking up) OR (not sleeping AND time has passed) ---
+        // This stops polling while sleeping, but allows immediate update on wake
+        if (forceUpdate || (!isSleeping && (now - lastUpdate > SPOTIFY_REFRESH_RATE_MS))) {
             // DEBUG: Log before call
-            Serial.println("DEBUG: Updating Data..."); 
+            // Serial.println("DEBUG: Updating Data..."); 
             if (getSpotifyData()) {
                 newDataAvailable = true;
-                Serial.println("DEBUG: Data Updated OK");
+                // Serial.println("DEBUG: Data Updated OK");
             } else {
-                Serial.println("DEBUG: Data Update Failed");
+                // Serial.println("DEBUG: Data Update Failed");
             }
             lastUpdate = now;
             forceUpdate = false;
@@ -962,9 +963,6 @@ void setup() {
     if (!prefs.getBool("loggedin", false)) {
         Serial.println("Status: Starting Login Flow");
         
-        // FIX: REMOVED SHADOW VARIABLE 'deviceId' that was here
-        // Now uses the global 'deviceId' populated above
-        
         char url[512];
         strcpy(url, authurl);
         strcat(url, "login?deviceId=");
@@ -1008,10 +1006,9 @@ void loop() {
     unsigned long now = millis();
 
     // 1. Sleep Logic
-    // --- FIX: Reset sleep timer if playing ---
-    // This ensures that even if you listen for 30 mins (no buttons pressed),
-    // and then pause, the screen stays on for another 5 mins before sleeping.
-    // It also prevents accidental sleep if "isPlaying" flickers.
+    // --- FIX: Reset sleep timer continuously while music is playing ---
+    // This prevents sleep if you listen for > 5 mins without pressing buttons.
+    // It also ensures that when you pause, the timer starts from that moment.
     if (sharedState.isPlaying) {
         lastActivityTime = now;
     }
