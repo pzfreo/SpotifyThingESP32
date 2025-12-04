@@ -1,3 +1,4 @@
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -1007,7 +1008,16 @@ void loop() {
     unsigned long now = millis();
 
     // 1. Sleep Logic
-    if (!isSleeping && !sharedState.isPlaying && (now - lastActivityTime > SLEEP_TIMEOUT_MS)) {
+    // --- FIX: Reset sleep timer if playing ---
+    // This ensures that even if you listen for 30 mins (no buttons pressed),
+    // and then pause, the screen stays on for another 5 mins before sleeping.
+    // It also prevents accidental sleep if "isPlaying" flickers.
+    if (sharedState.isPlaying) {
+        lastActivityTime = now;
+    }
+
+    // Standard Sleep Check
+    if (!isSleeping && (now - lastActivityTime > SLEEP_TIMEOUT_MS)) {
         isSleeping = true;
         digitalWrite(TFT_BL, LOW); 
         tft.fillScreen(C_BLACK);
@@ -1143,4 +1153,5 @@ void loop() {
         }
         xSemaphoreGive(dataMutex);
     }
+}
 }
