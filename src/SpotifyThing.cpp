@@ -118,6 +118,7 @@ volatile bool triggerPrev = false;
 volatile bool triggerPlay = false;
 volatile bool triggerLike = false;
 volatile int  triggerVolumeChange = 0;
+volatile bool triggerRefresh = false; // --- FIX: Added trigger for immediate wake updates ---
 
 unsigned long lastActivityTime = 0;
 bool isSleeping = false;
@@ -491,13 +492,25 @@ void updateDisplay() {
 #endif
 }
 
+// --- FIX: Updated WakeUp to handle redraw and force refresh ---
 bool wakeUp() {
     lastActivityTime = millis();
     if (isSleeping) {
         isSleeping = false;
         digitalWrite(TFT_BL, HIGH); 
         clearScreen();
-        updateDisplay(); 
+        
+        // 1. Force the Main Loop to redraw current memory (Text AND Art)
+        // This ensures the user sees something immediately
+        if (xSemaphoreTake(dataMutex, 10) == pdTRUE) {
+            newDataAvailable = true; 
+            xSemaphoreGive(dataMutex);
+        }
+
+        // 2. Force the Background Task to fetch new data immediately
+        triggerRefresh = true;
+
+        Serial.println("WakeUp: Requesting immediate update...");
         return true; 
     }
     return false; 
@@ -830,6 +843,12 @@ void spotifyTask(void * parameter) {
             saveToLiked();
             triggerLike = false;
             vTaskDelay(500 / portTICK_PERIOD_MS);
+        }
+
+        // --- FIX: Check for Wake Up Trigger ---
+        if (triggerRefresh) {
+            forceUpdate = true;
+            triggerRefresh = false;
         }
 
         // 2. Poll Data
