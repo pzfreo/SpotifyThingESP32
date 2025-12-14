@@ -1,6 +1,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include "certs.h"
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
@@ -23,7 +24,7 @@
 #include <Button2.h>
 #include <WiFiManager.h>
 #include <TFT_eSPI.h> 
-#include <QRCode.h>
+#include <qrcode.h>
 #include <JPEGDEC.h>
 
 // ============================================================
@@ -202,6 +203,7 @@ void drawAlbumArt(const char* url) {
     Serial.printf("Downloading Art: %s\n", url);
     
     WiFiClientSecure imgClient;
+    // Not validating album art certs due to dynamic URLs
     imgClient.setInsecure();
     HTTPClient imgHttp;
     imgHttp.useHTTP10(true);
@@ -551,21 +553,21 @@ void onPlayClick(Button2& btn) {
 
 boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
     WiFiClientSecure client;
-    client.setInsecure(); 
+    client.setCACert(spotauth_ca);
     client.setHandshakeTimeout(30); 
     HTTPClient http;
     JsonDocument jsonDoc;
     strlcpy(urlbuffer, authurl, sizeof(urlbuffer));
     strlcat(urlbuffer, "refresh?deviceId=", sizeof(urlbuffer));
-    strlcat(urlbuffer, deviceId, sizeof(urlbuffer)); 
-    strlcat(urlbuffer, "&authKey=", sizeof(urlbuffer)); 
-    strlcat(urlbuffer, AUTHKEY, sizeof(urlbuffer)); 
+    strlcat(urlbuffer, deviceId, sizeof(urlbuffer));
     
     // DEBUG: Print URL to ensure keys match (Careful with sharing this log)
     // Serial.printf("Polling Auth: %s\n", urlbuffer); 
     Serial.printf("Polling Device ID: %s\n", deviceId);
 
     if (!http.begin(client, urlbuffer)) return false;
+
+    http.addHeader("Authorization", AUTHKEY);
     
     int httpResponseCode = http.GET();
     boolean result = false;
@@ -586,7 +588,7 @@ boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
 boolean getSpotifyData() {
     if (WiFi.status() != WL_CONNECTED) return false;
     WiFiClientSecure client;
-    client.setInsecure();
+    client.setCACert(spotify_api_ca);
     client.setHandshakeTimeout(30);
     HTTPClient http;
     http.useHTTP10(true);
@@ -679,7 +681,7 @@ boolean getSpotifyData() {
 
 void setSpotifyVolume(int percent) {
     WiFiClientSecure client;
-    client.setInsecure();
+    client.setCACert(spotify_api_ca);
     HTTPClient http;
     char url[128];
     snprintf(url, sizeof(url), "%s?volume_percent=%d", SPOT_VOLUME, percent);
@@ -696,7 +698,7 @@ void setSpotifyVolume(int percent) {
 void sendSpotifyCommand(const char* method, const char* endpoint) {
     if (WiFi.status() != WL_CONNECTED) return;
     WiFiClientSecure client;
-    client.setInsecure();
+    client.setCACert(spotify_api_ca);
     HTTPClient http;
     String requestUrl = String(endpoint);
     http.begin(client, requestUrl);
@@ -746,7 +748,7 @@ void saveToLiked() {
     if (strlen(tid) < 5) return; 
 
     WiFiClientSecure client;
-    client.setInsecure();
+    client.setCACert(spotify_api_ca);
     HTTPClient http;
     
     // PUT /v1/me/tracks?ids={id}
@@ -787,7 +789,7 @@ void connect_to_wifi() {
 
     WiFiManager wm;
     wm.setAPCallback(configModeCallback);
-    if (!wm.autoConnect(AP_NAME)) {
+    if (!wm.autoConnect(AP_NAME, "spotify")) {
         ESP.restart();
         delay(1000);
     }
@@ -1150,5 +1152,4 @@ void loop() {
         }
         xSemaphoreGive(dataMutex);
     }
-}
 }
