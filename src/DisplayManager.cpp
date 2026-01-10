@@ -115,6 +115,7 @@ void DisplayManager::drawTextInRegion(const char* text, int16_t x, int16_t y,
 void DisplayManager::drawText(const char* text, int16_t x, int16_t y,
                                const Font& font, DisplayColor color) {
     DrawingContext dc(display_);
+    dc.setBackgroundColor(Colors::Black);  // Required for smooth font anti-aliasing
     dc.draw(TextLabel(text, font, color), x, y);
 }
 
@@ -122,6 +123,7 @@ void DisplayManager::drawTextInRegion(const char* text, int16_t x, int16_t y,
                                        int16_t w, int16_t h,
                                        const Font& font, DisplayColor color, DisplayColor bgColor) {
     DrawingContext dc(display_);
+    dc.setBackgroundColor(bgColor);  // Required for smooth font anti-aliasing
 
     // First fill the background region
     dc.draw(FilledRect(x, y, x + w - 1, y + h - 1, bgColor));
@@ -228,6 +230,9 @@ void DisplayManager::showPopup(const char* text, DisplayColor textColor, Display
 
     // Black border
     dc.draw(Rect(boxX, boxY, boxX + boxW - 1, boxY + boxH - 1, Colors::Black));
+
+    // Set background for anti-aliased text
+    dc.setBackgroundColor(bgColor);
 
     // Centered text (approximate centering)
     int16_t textX = boxX + 40;
