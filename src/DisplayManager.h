@@ -7,8 +7,10 @@
 #include "roo_display/driver/ili9488.h"
 #include "roo_display/color/color.h"
 #include "roo_display/shape/basic.h"
+#include "roo_display/shape/point.h"
 #include "roo_display/ui/text_label.h"
 #include "roo_display/font/font.h"
+#include "roo_display/core/orientation.h"
 
 #include "display_config.h"
 

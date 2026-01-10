@@ -4,7 +4,7 @@
 // === CONSTRUCTOR ===
 // ============================================================
 DisplayManager::DisplayManager()
-    : device_(Orientation().rotateRight()),  // Landscape mode (rotation 1)
+    : device_(),
       display_(device_) {
 }
 
@@ -17,6 +17,9 @@ void DisplayManager::init() {
 
     // Initialize the display
     display_.init(Colors::Black);
+
+    // Set landscape orientation (equivalent to rotation 1)
+    display_.setOrientation(Orientation().rotateRight());
 }
 
 void DisplayManager::hardwareReset() {
