@@ -32,6 +32,15 @@ void DisplayManager::init() {
     //            RightUp(4), UpRight(5), LeftUp(6), UpLeft(7)
     // Try orientation 2: LeftDown (DownRight rotated 90° CCW)
     display_.setOrientation(Orientation::LeftDown());
+
+    // M5Stack ILI9342C: Fix inverted colors by sending INVON command
+    // Send raw command 0x21 (Display Inversion ON) to fix white background issue
+    pinMode(TFT_DC, OUTPUT);
+    pinMode(TFT_CS, OUTPUT);
+    digitalWrite(TFT_CS, LOW);
+    digitalWrite(TFT_DC, LOW);  // Command mode
+    SPI.transfer(0x21);  // INVON
+    digitalWrite(TFT_CS, HIGH);
 #else
     // dev1 ILI9488: DownRight landscape (rotateRight from default)
     display_.setOrientation(Orientation().rotateRight());

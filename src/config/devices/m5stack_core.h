@@ -47,12 +47,12 @@
 #define INFO_PANE_WIDTH         320
 #define INFO_PANE_HEIGHT        200
 
-// Text positions (adjusted for larger fonts)
-#define TRACK_TITLE_Y           5
+// Text positions (adjusted for larger fonts - Y is baseline for roo_display)
+#define TRACK_TITLE_Y           45
 #define TRACK_TITLE_H           55
-#define ARTIST_Y                60
+#define ARTIST_Y                90
 #define ARTIST_H                45
-#define ALBUM_Y                 105
+#define ALBUM_Y                 135
 #define ALBUM_H                 40
 
 // Status bar at bottom
