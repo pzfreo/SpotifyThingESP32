@@ -313,10 +313,10 @@ void updateDisplay() {
 #else
         display.drawTextInRegion(sharedState.trackName, 10, 20,
                                   INFO_PANE_X - 20, TRACK_TITLE_H - 20,
-                                  fontTitle(), Colors::White, Colors::Black);
+                                  fontLarge(), Colors::White, Colors::Black);
         display.drawTextInRegion(sharedState.artistName, 10, ARTIST_Y + 10,
                                   INFO_PANE_X - 20, ARTIST_H - 10,
-                                  fontArtist(), Colors::Cyan, Colors::Black);
+                                  fontMedium(), Colors::Cyan, Colors::Black);
         display.drawTextInRegion(sharedState.albumName, 10, ALBUM_Y,
                                   INFO_PANE_X - 20, ALBUM_H,
                                   fontMedium(), Colors::White, Colors::Black);
@@ -418,7 +418,7 @@ void updateDisplay() {
                                   fontLarge(), Colors::White, Colors::Black);
         display.drawTextInRegion(sharedState.artistName, 10, ARTIST_Y,
                                   SCREEN_WIDTH - 20, ARTIST_H,
-                                  fontArtist(), Colors::Cyan, Colors::Black);
+                                  fontMedium(), Colors::Cyan, Colors::Black);
         display.drawTextInRegion(sharedState.albumName, 10, ALBUM_Y,
                                   SCREEN_WIDTH - 20, ALBUM_H,
                                   fontMedium(), Colors::White, Colors::Black);
@@ -558,6 +558,7 @@ boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
     client.setInsecure();
     client.setHandshakeTimeout(30);
     HTTPClient http;
+    http.useHTTP10(true);  // Use HTTP/1.0 for simpler connection handling
     JsonDocument jsonDoc;
     strlcpy(urlbuffer, authurl, sizeof(urlbuffer));
     strlcat(urlbuffer, "refresh?deviceId=", sizeof(urlbuffer));
@@ -581,6 +582,13 @@ boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
             }
         }
     }
+
+    // Drain any remaining response data
+    WiFiClient* stream = http.getStreamPtr();
+    while (stream && stream->available()) {
+        stream->read();
+    }
+
     http.end();
     return result;
 }
@@ -591,7 +599,7 @@ boolean getSpotifyData() {
     client.setInsecure();
     client.setHandshakeTimeout(30);
     HTTPClient http;
-    http.useHTTP10(true);
+    http.useHTTP10(true);  // Use HTTP/1.0 for simpler connection handling
 
     if (!http.begin(client, SPOT_PLAYER)) return false;
 
@@ -660,6 +668,13 @@ boolean getSpotifyData() {
                 newDataAvailable = true;
                 xSemaphoreGive(dataMutex);
             }
+
+            // Fully drain the response stream to prevent SSL errors
+            WiFiClient* stream = http.getStreamPtr();
+            while (stream && stream->available()) {
+                stream->read();
+            }
+
             http.end();
             return true;
         }
@@ -674,6 +689,13 @@ boolean getSpotifyData() {
     } else if (httpCode == 401) {
         refreshAccessToken(accesstoken, authurl);
     }
+
+    // Drain any remaining response data
+    WiFiClient* stream = http.getStreamPtr();
+    while (stream && stream->available()) {
+        stream->read();
+    }
+
     http.end();
     return false;
 }
