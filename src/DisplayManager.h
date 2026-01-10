@@ -134,11 +134,28 @@ constexpr uint8_t FONT_MEDIUM = 2;
 constexpr uint8_t FONT_LARGE = 4;
 #else
 // Using roo_fonts library for anti-aliased fonts
-#include "roo_fonts/NotoSans_Regular/12.h"
-#include "roo_fonts/NotoSans_Regular/18.h"
-#include "roo_fonts/NotoSans_Bold/27.h"
+// Available families: NotoSans, NotoSerif, NotoSansMono
+// Available weights: Regular, Bold, Italic, BoldItalic, Condensed, CondensedBold, CondensedItalic
+// Available sizes: 8, 10, 12, 15, 18, 27, 40, 60, 90
 
+#include "roo_fonts/NotoSans_Regular/12.h"
+#include "roo_fonts/NotoSans_Regular/15.h"
+#include "roo_fonts/NotoSans_Italic/18.h"
+#include "roo_fonts/NotoSans_Bold/27.h"
+#include "roo_fonts/NotoSans_Bold/40.h"
+
+// Small: status text, device info, timestamps
 inline const Font& fontSmall() { return font_NotoSans_Regular_12(); }
-inline const Font& fontMedium() { return font_NotoSans_Regular_18(); }
+
+// Medium: album name, general info
+inline const Font& fontMedium() { return font_NotoSans_Regular_15(); }
+
+// Artist: italic for visual distinction
+inline const Font& fontArtist() { return font_NotoSans_Italic_18(); }
+
+// Large: track titles (prominent, bold)
 inline const Font& fontLarge() { return font_NotoSans_Bold_27(); }
+
+// Extra large: track title for displays with album art (more space)
+inline const Font& fontTitle() { return font_NotoSans_Bold_40(); }
 #endif
