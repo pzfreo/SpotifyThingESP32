@@ -22,7 +22,7 @@
 #include <ArduinoJson.h>
 #include <Button2.h>
 #include <WiFiManager.h>
-#include <QRCode.h>
+#include <qrcode.h>
 #include <JPEGDEC.h>
 
 // Include roo_display-based DisplayManager
