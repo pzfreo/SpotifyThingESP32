@@ -582,6 +582,7 @@ boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
         }
     }
     http.end();
+    client.stop();  // Properly close SSL connection to prevent errors
     return result;
 }
 
@@ -661,6 +662,7 @@ boolean getSpotifyData() {
                 xSemaphoreGive(dataMutex);
             }
             http.end();
+            client.stop();  // Properly close SSL connection to prevent errors
             return true;
         }
     } else if (httpCode == 204) {
@@ -675,6 +677,7 @@ boolean getSpotifyData() {
         refreshAccessToken(accesstoken, authurl);
     }
     http.end();
+    client.stop();  // Properly close SSL connection to prevent errors
     return false;
 }
 
@@ -692,6 +695,7 @@ void setSpotifyVolume(int percent) {
     int code = http.PUT("");
     if (code == 401) refreshAccessToken(accesstoken, authurl);
     http.end();
+    client.stop();  // Properly close SSL connection to prevent errors
 }
 
 void sendSpotifyCommand(const char* method, const char* endpoint) {
@@ -713,6 +717,7 @@ void sendSpotifyCommand(const char* method, const char* endpoint) {
     if (httpCode == 401) {
         if (refreshAccessToken(accesstoken, authurl)) {
             http.end();
+            client.stop();  // Close before reopening
             http.begin(client, requestUrl);
             snprintf(auth, sizeof(auth), "Bearer %s", accesstoken);
             http.addHeader("Authorization", auth);
@@ -725,6 +730,7 @@ void sendSpotifyCommand(const char* method, const char* endpoint) {
         else requestUrl += "&device_id=";
         requestUrl += String(g_lastSpotifyDeviceID);
         http.end();
+        client.stop();  // Close before reopening
         http.begin(client, requestUrl);
         snprintf(auth, sizeof(auth), "Bearer %s", accesstoken);
         http.addHeader("Authorization", auth);
@@ -733,6 +739,7 @@ void sendSpotifyCommand(const char* method, const char* endpoint) {
         else if (strcmp(method, "PUT") == 0) httpCode = http.PUT("");
     }
     http.end();
+    client.stop();  // Properly close SSL connection to prevent errors
 }
 
 void saveToLiked() {
@@ -764,6 +771,7 @@ void saveToLiked() {
         if (httpCode == 401) refreshAccessToken(accesstoken, authurl);
     }
     http.end();
+    client.stop();  // Properly close SSL connection to prevent errors
 }
 
 // ============================================================
