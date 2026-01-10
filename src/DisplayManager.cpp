@@ -23,8 +23,8 @@ void DisplayManager::init() {
     // M5Stack: Testing different orientations
     // Available: RightDown(0), DownRight(1), LeftDown(2), DownLeft(3),
     //            RightUp(4), UpRight(5), LeftUp(6), UpLeft(7)
-    // Try orientation 1: DownRight (same as rotateRight)
-    display_.setOrientation(Orientation::DownRight());
+    // Try orientation 2: LeftDown (DownRight rotated 90° CCW)
+    display_.setOrientation(Orientation::LeftDown());
 #else
     // dev1 ILI9488: DownRight landscape (rotateRight from default)
     display_.setOrientation(Orientation().rotateRight());
