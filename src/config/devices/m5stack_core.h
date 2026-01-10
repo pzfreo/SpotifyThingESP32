@@ -10,16 +10,22 @@
 #define DEVICE_NAME "M5Stack-Core"
 
 // --- Display Driver ---
-#define DISPLAY_DRIVER_M5STACK  1
-#define USE_M5_LIBRARY          1
+// Using roo_display with ILI9341 for better fonts (M5Stack uses ILI9342C, compatible with ILI9341)
+#define DISPLAY_DRIVER_ILI9341  1
 
 // --- Display Dimensions ---
 #define SCREEN_WIDTH            320
 #define SCREEN_HEIGHT           240
 #define SCREEN_ROTATION         1   // Landscape
 
-// --- M5Stack handles pins internally ---
-// No need to define TFT pins - M5 library manages them
+// --- Display Pins (M5Stack Core) ---
+#define TFT_CS                  14
+#define TFT_DC                  27
+#define TFT_RST                 33
+#define TFT_MOSI                23
+#define TFT_SCLK                18
+#define TFT_MISO                19
+#define TFT_BL                  32   // Backlight
 
 // --- Button Mapping ---
 // M5Stack has 3 front buttons: A (left), B (center), C (right)

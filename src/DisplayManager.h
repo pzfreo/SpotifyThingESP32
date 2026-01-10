@@ -9,45 +9,27 @@
 // ============================================================
 // === DISPLAY DRIVER INCLUDES ===
 // ============================================================
-#if defined(USE_M5_LIBRARY)
-    #include <M5Stack.h>
-    // M5Stack uses TFT_eSPI internally - we'll wrap it
-#else
-    // Use roo_display for custom displays
-    #include "roo_display.h"
-    #include "roo_display/color/color.h"
-    #include "roo_display/shape/basic.h"
-    #include "roo_display/shape/point.h"
-    #include "roo_display/ui/text_label.h"
-    #include "roo_display/font/font.h"
-    #include "roo_display/core/orientation.h"
+// Use roo_display for all displays with custom anti-aliased fonts
+#include "roo_display.h"
+#include "roo_display/color/color.h"
+#include "roo_display/shape/basic.h"
+#include "roo_display/shape/point.h"
+#include "roo_display/ui/text_label.h"
+#include "roo_display/font/font.h"
+#include "roo_display/core/orientation.h"
 
-    #if defined(DISPLAY_DRIVER_ILI9488)
-        #include "roo_display/driver/ili9488.h"
-    #endif
-
-    using namespace roo_display;
+#if defined(DISPLAY_DRIVER_ILI9488)
+    #include "roo_display/driver/ili9488.h"
+#elif defined(DISPLAY_DRIVER_ILI9341)
+    #include "roo_display/driver/ili9341.h"
 #endif
+
+using namespace roo_display;
 
 // ============================================================
 // === COLOR DEFINITIONS ===
 // ============================================================
-#if defined(USE_M5_LIBRARY)
-// M5Stack uses TFT_eSPI colors (16-bit RGB565)
-typedef uint16_t DisplayColor;
-namespace Colors {
-    constexpr DisplayColor Black   = TFT_BLACK;
-    constexpr DisplayColor White   = TFT_WHITE;
-    constexpr DisplayColor Red     = TFT_RED;
-    constexpr DisplayColor Green   = TFT_GREEN;
-    constexpr DisplayColor Blue    = TFT_BLUE;
-    constexpr DisplayColor Cyan    = TFT_CYAN;
-    constexpr DisplayColor Magenta = TFT_MAGENTA;
-    constexpr DisplayColor Orange  = TFT_ORANGE;
-    constexpr DisplayColor Grey    = 0x4208;  // RGB565 grey
-}
-#else
-// roo_display Color type
+// roo_display Color type (used by all devices)
 typedef Color DisplayColor;
 namespace Colors {
     constexpr DisplayColor Black   = color::Black;
@@ -60,7 +42,6 @@ namespace Colors {
     constexpr DisplayColor Orange  = color::Orange;
     constexpr DisplayColor Grey    = Color(0x42, 0x42, 0x42);
 }
-#endif
 
 // ============================================================
 // === DISPLAY MANAGER CLASS ===
@@ -79,16 +60,10 @@ public:
     void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, DisplayColor color);
     void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, DisplayColor color);
 
-    // Text rendering
-#if defined(USE_M5_LIBRARY)
-    void drawText(const char* text, int16_t x, int16_t y, uint8_t size, DisplayColor color);
-    void drawTextInRegion(const char* text, int16_t x, int16_t y, int16_t w, int16_t h,
-                          uint8_t size, DisplayColor color, DisplayColor bgColor = Colors::Black);
-#else
+    // Text rendering (using roo_fonts for all devices)
     void drawText(const char* text, int16_t x, int16_t y, const Font& font, DisplayColor color);
     void drawTextInRegion(const char* text, int16_t x, int16_t y, int16_t w, int16_t h,
                           const Font& font, DisplayColor color, DisplayColor bgColor = Colors::Black);
-#endif
 
     // UI Components
     void drawProgressBar(int progress, int duration, int16_t y, int16_t height,
@@ -109,17 +84,17 @@ public:
     void pushImage(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* data);
 #endif
 
-#if !defined(USE_M5_LIBRARY)
     // Get underlying roo_display for advanced operations
     Display& getDisplay() { return display_; }
-#endif
 
 private:
-#if defined(USE_M5_LIBRARY)
-    // M5Stack manages display internally via M5.Lcd
-#elif defined(DISPLAY_DRIVER_ILI9488)
+#if defined(DISPLAY_DRIVER_ILI9488)
     // ILI9488 driver with configurable pins
     Ili9488spi<TFT_CS, TFT_DC, TFT_RST> device_;
+    Display display_;
+#elif defined(DISPLAY_DRIVER_ILI9341)
+    // ILI9341 driver with configurable pins (M5Stack Core)
+    Ili9341spi<TFT_CS, TFT_DC, TFT_RST> device_;
     Display display_;
 #endif
 };
@@ -127,14 +102,8 @@ private:
 // ============================================================
 // === FONTS ===
 // ============================================================
-#if defined(USE_M5_LIBRARY)
-// M5Stack uses numeric font sizes
-constexpr uint8_t FONT_SMALL = 1;
-constexpr uint8_t FONT_MEDIUM = 2;
-constexpr uint8_t FONT_LARGE = 4;
-#else
-// Using roo_fonts library for anti-aliased fonts
-// Reduced to 3 fonts to minimize flash usage for dev1
+// Using roo_fonts library for anti-aliased fonts on all devices
+// Reduced to 3 fonts to minimize flash usage
 // Available families: NotoSans, NotoSerif, NotoSansMono
 // Available weights: Regular, Bold, Italic, BoldItalic, Condensed, CondensedBold, CondensedItalic
 // Available sizes: 8, 10, 12, 15, 18, 27, 40, 60, 90
@@ -151,4 +120,3 @@ inline const Font& fontMedium() { return font_NotoSans_Regular_15(); }
 
 // Large: track titles, prominent text (18pt bold saves flash vs 27pt/40pt)
 inline const Font& fontLarge() { return font_NotoSans_Bold_18(); }
-#endif
