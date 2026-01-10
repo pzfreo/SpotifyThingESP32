@@ -558,6 +558,7 @@ boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
     client.setInsecure();
     client.setHandshakeTimeout(30);
     HTTPClient http;
+    http.useHTTP10(true);  // Use HTTP/1.0 for simpler connection handling
     JsonDocument jsonDoc;
     strlcpy(urlbuffer, authurl, sizeof(urlbuffer));
     strlcat(urlbuffer, "refresh?deviceId=", sizeof(urlbuffer));
@@ -581,8 +582,14 @@ boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
             }
         }
     }
+
+    // Drain any remaining response data
+    WiFiClient* stream = http.getStreamPtr();
+    while (stream && stream->available()) {
+        stream->read();
+    }
+
     http.end();
-    client.stop();  // Properly close SSL connection to prevent errors
     return result;
 }
 
@@ -592,7 +599,7 @@ boolean getSpotifyData() {
     client.setInsecure();
     client.setHandshakeTimeout(30);
     HTTPClient http;
-    http.useHTTP10(true);
+    http.useHTTP10(true);  // Use HTTP/1.0 for simpler connection handling
 
     if (!http.begin(client, SPOT_PLAYER)) return false;
 
@@ -661,8 +668,14 @@ boolean getSpotifyData() {
                 newDataAvailable = true;
                 xSemaphoreGive(dataMutex);
             }
+
+            // Fully drain the response stream to prevent SSL errors
+            WiFiClient* stream = http.getStreamPtr();
+            while (stream && stream->available()) {
+                stream->read();
+            }
+
             http.end();
-            client.stop();  // Properly close SSL connection to prevent errors
             return true;
         }
     } else if (httpCode == 204) {
@@ -676,8 +689,14 @@ boolean getSpotifyData() {
     } else if (httpCode == 401) {
         refreshAccessToken(accesstoken, authurl);
     }
+
+    // Drain any remaining response data
+    WiFiClient* stream = http.getStreamPtr();
+    while (stream && stream->available()) {
+        stream->read();
+    }
+
     http.end();
-    client.stop();  // Properly close SSL connection to prevent errors
     return false;
 }
 
@@ -695,7 +714,6 @@ void setSpotifyVolume(int percent) {
     int code = http.PUT("");
     if (code == 401) refreshAccessToken(accesstoken, authurl);
     http.end();
-    client.stop();  // Properly close SSL connection to prevent errors
 }
 
 void sendSpotifyCommand(const char* method, const char* endpoint) {
@@ -717,7 +735,6 @@ void sendSpotifyCommand(const char* method, const char* endpoint) {
     if (httpCode == 401) {
         if (refreshAccessToken(accesstoken, authurl)) {
             http.end();
-            client.stop();  // Close before reopening
             http.begin(client, requestUrl);
             snprintf(auth, sizeof(auth), "Bearer %s", accesstoken);
             http.addHeader("Authorization", auth);
@@ -730,7 +747,6 @@ void sendSpotifyCommand(const char* method, const char* endpoint) {
         else requestUrl += "&device_id=";
         requestUrl += String(g_lastSpotifyDeviceID);
         http.end();
-        client.stop();  // Close before reopening
         http.begin(client, requestUrl);
         snprintf(auth, sizeof(auth), "Bearer %s", accesstoken);
         http.addHeader("Authorization", auth);
@@ -739,7 +755,6 @@ void sendSpotifyCommand(const char* method, const char* endpoint) {
         else if (strcmp(method, "PUT") == 0) httpCode = http.PUT("");
     }
     http.end();
-    client.stop();  // Properly close SSL connection to prevent errors
 }
 
 void saveToLiked() {
@@ -771,7 +786,6 @@ void saveToLiked() {
         if (httpCode == 401) refreshAccessToken(accesstoken, authurl);
     }
     http.end();
-    client.stop();  // Properly close SSL connection to prevent errors
 }
 
 // ============================================================
