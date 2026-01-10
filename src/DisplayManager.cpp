@@ -106,9 +106,10 @@ void DisplayManager::drawProgressBar(int progress, int duration, int16_t y,
 
 void DisplayManager::drawPlayIcon(int16_t x, int16_t y, Color color) {
     DrawingContext dc(display_);
-    // Play triangle pointing right - use explicit Point construction to avoid narrowing
-    dc.draw(FilledTriangle(Point(x, y), Point(x, static_cast<int16_t>(y + 16)),
-                           Point(static_cast<int16_t>(x + 15), static_cast<int16_t>(y + 8)), color));
+    // Play triangle pointing right - cast arithmetic to avoid narrowing warnings
+    dc.draw(FilledTriangle({x, y},
+                           {x, static_cast<int16_t>(y + 16)},
+                           {static_cast<int16_t>(x + 15), static_cast<int16_t>(y + 8)}, color));
 }
 
 void DisplayManager::drawPauseIcon(int16_t x, int16_t y, Color color) {
