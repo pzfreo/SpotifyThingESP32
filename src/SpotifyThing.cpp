@@ -558,7 +558,6 @@ boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
     client.setInsecure();
     client.setHandshakeTimeout(30);
     HTTPClient http;
-    http.useHTTP10(true);  // Use HTTP/1.0 for simpler connection handling
     JsonDocument jsonDoc;
     strlcpy(urlbuffer, authurl, sizeof(urlbuffer));
     strlcat(urlbuffer, "refresh?deviceId=", sizeof(urlbuffer));
@@ -582,13 +581,6 @@ boolean refreshAccessToken(char *targetBuffer, const char* baseurl) {
             }
         }
     }
-
-    // Drain any remaining response data
-    WiFiClient* stream = http.getStreamPtr();
-    while (stream && stream->available()) {
-        stream->read();
-    }
-
     http.end();
     return result;
 }
@@ -599,7 +591,7 @@ boolean getSpotifyData() {
     client.setInsecure();
     client.setHandshakeTimeout(30);
     HTTPClient http;
-    http.useHTTP10(true);  // Use HTTP/1.0 for simpler connection handling
+    http.useHTTP10(true);
 
     if (!http.begin(client, SPOT_PLAYER)) return false;
 
@@ -669,12 +661,6 @@ boolean getSpotifyData() {
                 xSemaphoreGive(dataMutex);
             }
 
-            // Fully drain the response stream to prevent SSL errors
-            WiFiClient* stream = http.getStreamPtr();
-            while (stream && stream->available()) {
-                stream->read();
-            }
-
             http.end();
             return true;
         }
@@ -689,13 +675,6 @@ boolean getSpotifyData() {
     } else if (httpCode == 401) {
         refreshAccessToken(accesstoken, authurl);
     }
-
-    // Drain any remaining response data
-    WiFiClient* stream = http.getStreamPtr();
-    while (stream && stream->available()) {
-        stream->read();
-    }
-
     http.end();
     return false;
 }
