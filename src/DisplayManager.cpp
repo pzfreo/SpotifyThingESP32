@@ -4,9 +4,16 @@
 // === CONSTRUCTOR ===
 // ============================================================
 DisplayManager::DisplayManager()
+#if defined(DISPLAY_DRIVER_ILI9341)
+    // M5Stack: Initialize with landscape dimensions (320x240)
+    : device_(ILI9341_Target(ILI9341_Transport(), SCREEN_WIDTH, SCREEN_HEIGHT)),
+      display_(device_) {
+}
+#else
     : device_(),
       display_(device_) {
 }
+#endif
 
 // ============================================================
 // === INITIALIZATION ===

@@ -22,6 +22,7 @@
     #include "roo_display/driver/ili9488.h"
 #elif defined(DISPLAY_DRIVER_ILI9341)
     #include "roo_display/driver/ili9341.h"
+    #include "roo_display/transport/spi.h"
 #endif
 
 using namespace roo_display;
@@ -93,8 +94,12 @@ private:
     Ili9488spi<TFT_CS, TFT_DC, TFT_RST> device_;
     Display display_;
 #elif defined(DISPLAY_DRIVER_ILI9341)
-    // ILI9341 driver with configurable pins (M5Stack Core)
-    Ili9341spi<TFT_CS, TFT_DC, TFT_RST> device_;
+    // ILI9341 driver with configurable pins (M5Stack Core  - landscape 320x240)
+    using ILI9341_Transport = SpiTransport<TFT_CS, TFT_DC, TFT_RST, ili9341::DefaultSpiSettings, DefaultSpi, DefaultGpio>;
+    using ILI9341_Target = ili9341::Ili9341Target<ILI9341_Transport>;
+    using ILI9341_Device = AddrWindowDevice<ILI9341_Target>;
+
+    ILI9341_Device device_;
     Display display_;
 #endif
 };
