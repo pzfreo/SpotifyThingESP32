@@ -78,7 +78,13 @@ void DisplayManager::drawText(const char* text, int16_t x, int16_t y,
                                const Font& font, DisplayColor color) {
     DrawingContext dc(display_);
     dc.setBackgroundColor(Colors::Black);  // Required for smooth font anti-aliasing
+
+#if defined(DISPLAY_DRIVER_ILI9341)
+    // M5Stack ILI9341: Use FILL_MODE_RECTANGLE to ensure text is visible
+    dc.draw(TextLabel(text, font, color, FILL_MODE_RECTANGLE), x, y);
+#else
     dc.draw(TextLabel(text, font, color), x, y);
+#endif
 }
 
 void DisplayManager::drawTextInRegion(const char* text, int16_t x, int16_t y,
@@ -93,8 +99,13 @@ void DisplayManager::drawTextInRegion(const char* text, int16_t x, int16_t y,
     // Set clip box to constrain text
     dc.setClipBox(Box(x, y, x + w - 1, y + h - 1));
 
-    // Draw text within the clipped region
+#if defined(DISPLAY_DRIVER_ILI9341)
+    // M5Stack ILI9341: Use FILL_MODE_RECTANGLE to ensure text is visible
+    dc.draw(TextLabel(text, font, color, FILL_MODE_RECTANGLE), x, y);
+#else
+    // Draw text within the clipped region with anti-aliasing
     dc.draw(TextLabel(text, font, color), x, y);
+#endif
 }
 
 // ============================================================
