@@ -19,12 +19,14 @@ void DisplayManager::init() {
     display_.init(Colors::Black);
 
     // Set landscape orientation
-    // M5Stack ILI9342C needs special orientation handling
 #if defined(DISPLAY_DRIVER_ILI9341)
-    // M5Stack: Use DownLeft orientation (equivalent to TFT_eSPI rotation 1)
-    display_.setOrientation(Orientation::DownLeft());
+    // M5Stack: Testing different orientations
+    // Available: RightDown(0), DownRight(1), LeftDown(2), DownLeft(3),
+    //            RightUp(4), UpRight(5), LeftUp(6), UpLeft(7)
+    // Try orientation 5: UpRight
+    display_.setOrientation(Orientation::UpRight());
 #else
-    // dev1 ILI9488: Standard landscape
+    // dev1 ILI9488: DownRight landscape (rotateRight from default)
     display_.setOrientation(Orientation().rotateRight());
 #endif
 }
