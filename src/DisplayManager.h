@@ -108,20 +108,37 @@ private:
 // === FONTS ===
 // ============================================================
 // Using roo_fonts library for anti-aliased fonts on all devices
-// Reduced to 3 fonts to minimize flash usage
+// M5Stack has more flash available (no album art), so uses larger fonts
 // Available families: NotoSans, NotoSerif, NotoSansMono
 // Available weights: Regular, Bold, Italic, BoldItalic, Condensed, CondensedBold, CondensedItalic
 // Available sizes: 8, 10, 12, 15, 18, 27, 40, 60, 90
 
-#include "roo_fonts/NotoSans_Regular/12.h"
-#include "roo_fonts/NotoSans_Regular/15.h"
-#include "roo_fonts/NotoSans_Bold/18.h"
+#if defined(DISPLAY_DRIVER_ILI9341)
+    // M5Stack: Larger fonts for better readability (has more flash available)
+    #include "roo_fonts/NotoSans_Regular/18.h"   // 1.5x for time/device
+    #include "roo_fonts/NotoSans_Regular/27.h"   // ~2x for album/artist
+    #include "roo_fonts/NotoSans_Bold/40.h"      // ~2x for track title
 
-// Small: status text, device info, timestamps
-inline const Font& fontSmall() { return font_NotoSans_Regular_12(); }
+    // Small: status text, device info, timestamps (1.5x bigger)
+    inline const Font& fontSmall() { return font_NotoSans_Regular_18(); }
 
-// Medium: album name, general info, artist names
-inline const Font& fontMedium() { return font_NotoSans_Regular_15(); }
+    // Medium: album name, artist names (~2x bigger)
+    inline const Font& fontMedium() { return font_NotoSans_Regular_27(); }
 
-// Large: track titles, prominent text (18pt bold saves flash vs 27pt/40pt)
-inline const Font& fontLarge() { return font_NotoSans_Bold_18(); }
+    // Large: track titles (~2x bigger)
+    inline const Font& fontLarge() { return font_NotoSans_Bold_40(); }
+#else
+    // dev1: Reduced to 3 fonts to minimize flash usage
+    #include "roo_fonts/NotoSans_Regular/12.h"
+    #include "roo_fonts/NotoSans_Regular/15.h"
+    #include "roo_fonts/NotoSans_Bold/18.h"
+
+    // Small: status text, device info, timestamps
+    inline const Font& fontSmall() { return font_NotoSans_Regular_12(); }
+
+    // Medium: album name, general info, artist names
+    inline const Font& fontMedium() { return font_NotoSans_Regular_15(); }
+
+    // Large: track titles, prominent text (18pt bold saves flash vs 27pt/40pt)
+    inline const Font& fontLarge() { return font_NotoSans_Bold_18(); }
+#endif

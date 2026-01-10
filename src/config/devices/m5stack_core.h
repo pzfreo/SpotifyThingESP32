@@ -47,12 +47,12 @@
 #define INFO_PANE_WIDTH         320
 #define INFO_PANE_HEIGHT        200
 
-// Text positions (centered, larger for readability)
-#define TRACK_TITLE_Y           10
-#define TRACK_TITLE_H           60
-#define ARTIST_Y                70
-#define ARTIST_H                50
-#define ALBUM_Y                 120
+// Text positions (adjusted for larger fonts)
+#define TRACK_TITLE_Y           5
+#define TRACK_TITLE_H           55
+#define ARTIST_Y                60
+#define ARTIST_H                45
+#define ALBUM_Y                 105
 #define ALBUM_H                 40
 
 // Status bar at bottom
