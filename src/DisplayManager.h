@@ -114,13 +114,13 @@ private:
 // Available sizes: 8, 10, 12, 15, 18, 27, 40, 60, 90
 
 #if defined(DISPLAY_DRIVER_ILI9341)
-    // M5Stack: Larger fonts for better readability (has more flash available)
-    #include "roo_fonts/NotoSans_Regular/18.h"   // 1.5x for time/device
+    // M5Stack: 2 larger fonts (27pt, 40pt) - keeps flash under limit
+    #include "roo_fonts/NotoSans_Regular/12.h"   // Original size for time/device
     #include "roo_fonts/NotoSans_Regular/27.h"   // ~2x for album/artist
     #include "roo_fonts/NotoSans_Bold/40.h"      // ~2x for track title
 
-    // Small: status text, device info, timestamps (1.5x bigger)
-    inline const Font& fontSmall() { return font_NotoSans_Regular_18(); }
+    // Small: status text, device info, timestamps (original size to save flash)
+    inline const Font& fontSmall() { return font_NotoSans_Regular_12(); }
 
     // Medium: album name, artist names (~2x bigger)
     inline const Font& fontMedium() { return font_NotoSans_Regular_27(); }
