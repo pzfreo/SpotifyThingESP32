@@ -65,7 +65,7 @@ jobs:
 
       - name: Build Firmware
         env:
-          SPOTIFY_AUTH_KEY: "test-auth-key-for-ci"
+          SPOTIFY_AUTH_KEY: ${{ secrets.SPOTIFY_AUTH_KEY }}
         run: pio run -e freenove_esp32_wrover
 
       - name: Upload Firmware Artifact
