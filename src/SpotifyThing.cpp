@@ -23,27 +23,31 @@
 #include <Button2.h>
 #include <WiFiManager.h>
 #include <qrcode.h>
-#include <JPEGDEC.h>
 
-// Include roo_display-based DisplayManager
+#if FEATURE_ALBUM_ART
+#include <JPEGDEC.h>
+#endif
+
+// Include device-aware DisplayManager
 #include "DisplayManager.h"
 
 // ============================================================
 // === CONFIGURATION ===
 // ============================================================
 
-#define ENABLE_ALBUM_ART
 #define SPOTIFY_REFRESH_RATE_MS 1000
 #define AP_NAME "SpotifySetup"
 #define SLEEP_TIMEOUT_MS 300000 // 5 Minutes
 
-// --- PINS ---
-#define PIN_PREV   12
-#define PIN_PLAY   13
-#define PIN_NEXT   14
+// --- PINS (from device config) ---
+#define PIN_PREV   BTN_VOL_DOWN_PIN
+#define PIN_PLAY   BTN_PLAY_PAUSE_PIN
+#define PIN_NEXT   BTN_VOL_UP_PIN
 
 // --- MEMORY ---
+#if FEATURE_ALBUM_ART
 #define JPG_BUFFER_SIZE 60000
+#endif
 
 
 // --- API ENDPOINTS ---
@@ -64,10 +68,13 @@ Preferences prefs;
 SemaphoreHandle_t dataMutex;
 TaskHandle_t spotifyTaskHandle;
 
-// roo_display manager
+// Display manager (device-aware)
 DisplayManager display;
+
+#if FEATURE_ALBUM_ART
 JPEGDEC jpeg;
 uint8_t* jpgBuffer = NULL;
+#endif
 
 Button2 btnPrev, btnPlay, btnNext;
 
@@ -135,9 +142,11 @@ bool showFeedbackMessage = false;
 // === FORWARD DECLARATIONS ===
 // ============================================================
 void updateDisplay();
+#if FEATURE_ALBUM_ART
 void drawAlbumArt(const char* url);
 int JPEGDraw(JPEGDRAW *pDraw);
-void showPopup(const char* text, Color color);
+#endif
+void showPopup(const char* text, DisplayColor color);
 void showQRCode(const char* data, const char* title, const char* footer);
 void clearScreen();
 bool wakeUp();
@@ -156,7 +165,7 @@ void spotifyTask(void * parameter);
 // === HELPER FUNCTIONS ===
 // ============================================================
 
-void showPopup(const char* text, Color color) {
+void showPopup(const char* text, DisplayColor color) {
     display.showPopup(text, color, Colors::White);
 }
 
@@ -170,6 +179,7 @@ void clearScreen() {
     lastBarWidth = -1;
 }
 
+#if FEATURE_ALBUM_ART
 // JPEG Callback - uses DisplayManager's pushImage
 int JPEGDraw(JPEGDRAW *pDraw) {
     display.pushImage(pDraw->x, pDraw->y, pDraw->iWidth, pDraw->iHeight,
@@ -216,7 +226,7 @@ void drawAlbumArt(const char* url) {
                         if (scale == JPEG_SCALE_HALF) { outputWidth /= 2; outputHeight /= 2; }
                         if (scale == JPEG_SCALE_QUARTER) { outputWidth /= 4; outputHeight /= 4; }
 
-                        int xOff = RIGHT_PANE_X + (LEFT_PANE_WIDTH - outputWidth) / 2;
+                        int xOff = INFO_PANE_X + (ALBUM_ART_SIZE - outputWidth) / 2;
                         int yOff = (STATUS_BAR_Y - outputHeight) / 2;
 
                         jpeg.setPixelType(RGB565_BIG_ENDIAN);
@@ -231,18 +241,24 @@ void drawAlbumArt(const char* url) {
         imgHttp.end();
     }
 }
+#endif  // FEATURE_ALBUM_ART
 
 void showQRCode(const char* data, const char* title, const char* footer) {
     display.clear(Colors::Black);
 
     // Draw title
+#if defined(USE_M5_LIBRARY)
+    display.drawText(title, 10, 20, FONT_MEDIUM, Colors::White);
+#else
     display.drawText(title, 10, 20, fontMedium(), Colors::White);
+#endif
 
     QRCode qrcode;
     uint8_t qrcodeData[qrcode_getBufferSize(10)];
     qrcode_initText(&qrcode, qrcodeData, 10, ECC_LOW, data);
 
-    int scale = 3;
+    // Scale QR code based on screen size
+    int scale = (SCREEN_WIDTH > 320) ? 3 : 2;
     int border = 10;
     int startX = (SCREEN_WIDTH - (qrcode.size * scale)) / 2;
     int startY = 60;
@@ -263,35 +279,48 @@ void showQRCode(const char* data, const char* title, const char* footer) {
     }
 
     // Draw footer
-    display.drawText(footer, 10, 280, fontMedium(), Colors::Green);
+    int footerY = startY + (qrcode.size * scale) + border + 20;
+#if defined(USE_M5_LIBRARY)
+    display.drawText(footer, 10, footerY, FONT_MEDIUM, Colors::Green);
+#else
+    display.drawText(footer, 10, footerY, fontMedium(), Colors::Green);
+#endif
 }
 
 void updateDisplay() {
     bool trackChanged = strcmp(sharedState.trackName, lastTrackName) != 0;
 
-#ifdef ENABLE_ALBUM_ART
-    // --- ART LAYOUT (480x320) ---
-    // Left: Text (0-240). Right: Art (240-480). Bottom: Status (Y=280).
+#if FEATURE_ALBUM_ART
+    // --- TWO-PANE LAYOUT (Album Art + Info) ---
+    // Left: Text (0 to INFO_PANE_X). Right: Art. Bottom: Status.
 
     if (trackChanged) {
         // Clear Left Text Area
-        display.fillRect(0, 0, LEFT_PANE_WIDTH, PROGRESS_BAR_Y, Colors::Black);
+        display.fillRect(0, 0, INFO_PANE_X, PROGRESS_BAR_Y, Colors::Black);
         strlcpy(lastTrackName, sharedState.trackName, sizeof(lastTrackName));
 
         // Track Title (top section)
+#if defined(USE_M5_LIBRARY)
         display.drawTextInRegion(sharedState.trackName, 10, 20,
-                                  LEFT_PANE_WIDTH - 20, TRACK_TITLE_H - 20,
-                                  fontLarge(), Colors::White, Colors::Black);
-
-        // Artist (middle section)
+                                  INFO_PANE_X - 20, TRACK_TITLE_H - 20,
+                                  FONT_LARGE, Colors::White, Colors::Black);
         display.drawTextInRegion(sharedState.artistName, 10, ARTIST_Y + 10,
-                                  LEFT_PANE_WIDTH - 20, ARTIST_H - 10,
-                                  fontMedium(), Colors::Cyan, Colors::Black);
-
-        // Album (below artist)
+                                  INFO_PANE_X - 20, ARTIST_H - 10,
+                                  FONT_MEDIUM, Colors::Cyan, Colors::Black);
         display.drawTextInRegion(sharedState.albumName, 10, ALBUM_Y,
-                                  LEFT_PANE_WIDTH - 20, ALBUM_H,
+                                  INFO_PANE_X - 20, ALBUM_H,
+                                  FONT_MEDIUM, Colors::White, Colors::Black);
+#else
+        display.drawTextInRegion(sharedState.trackName, 10, 20,
+                                  INFO_PANE_X - 20, TRACK_TITLE_H - 20,
+                                  fontLarge(), Colors::White, Colors::Black);
+        display.drawTextInRegion(sharedState.artistName, 10, ARTIST_Y + 10,
+                                  INFO_PANE_X - 20, ARTIST_H - 10,
+                                  fontMedium(), Colors::Cyan, Colors::Black);
+        display.drawTextInRegion(sharedState.albumName, 10, ALBUM_Y,
+                                  INFO_PANE_X - 20, ALBUM_H,
                                   fontMedium(), Colors::White, Colors::Black);
+#endif
     }
 
     // Progress Bar (Full width above status bar)
@@ -308,7 +337,7 @@ void updateDisplay() {
                                  Colors::Green, Colors::Grey);
     }
 
-    // --- STATUS BAR (Y=280 to 320) ---
+    // --- STATUS BAR ---
     bool deviceChanged = (strcmp(sharedState.deviceName, lastDeviceName) != 0);
     bool volumeChanged = (sharedState.volumePercent != lastVolume);
     bool playStateChanged = (sharedState.isPlaying != lastIsPlaying);
@@ -328,13 +357,17 @@ void updateDisplay() {
 
     // Clear time area and redraw
     display.fillRect(TIME_X, TIME_Y, 150, 25, Colors::Black);
+#if defined(USE_M5_LIBRARY)
+    display.drawText(timeStr, TIME_X, TIME_Y, FONT_MEDIUM, Colors::White);
+#else
     display.drawText(timeStr, TIME_X, TIME_Y, fontMedium(), Colors::White);
+#endif
 
     // 2. Play/Pause Icon (Center) - Only if state changed
     if (playStateChanged || trackChanged) {
         lastIsPlaying = sharedState.isPlaying;
         // Clear icon area
-        display.fillRect(220, STATUS_BAR_Y, 40, STATUS_BAR_HEIGHT, Colors::Black);
+        display.fillRect(PLAY_ICON_X - 10, STATUS_BAR_Y, 40, STATUS_BAR_HEIGHT, Colors::Black);
 
         if (sharedState.isPlaying) {
             display.drawPlayIcon(PLAY_ICON_X, PLAY_ICON_Y, Colors::Green);
@@ -349,86 +382,111 @@ void updateDisplay() {
         lastVolume = sharedState.volumePercent;
 
         // Clear right area
-        display.fillRect(280, STATUS_BAR_Y, 200, STATUS_BAR_HEIGHT, Colors::Black);
+        display.fillRect(DEVICE_INFO_X - 20, STATUS_BAR_Y, SCREEN_WIDTH - DEVICE_INFO_X + 20, STATUS_BAR_HEIGHT, Colors::Black);
 
         // Format device info string
         char deviceInfo[128];
         snprintf(deviceInfo, sizeof(deviceInfo), "%s [%d%%]",
                  sharedState.deviceName, sharedState.volumePercent);
 
-        display.drawText(deviceInfo, DEVICE_INFO_X, DEVICE_INFO_Y,
-                          fontSmall(), Colors::White);
+#if defined(USE_M5_LIBRARY)
+        display.drawText(deviceInfo, DEVICE_INFO_X, DEVICE_INFO_Y, FONT_SMALL, Colors::White);
+#else
+        display.drawText(deviceInfo, DEVICE_INFO_X, DEVICE_INFO_Y, fontSmall(), Colors::White);
+#endif
     }
 
 #else
-    // --- TEXT LAYOUT ---
+    // --- SINGLE-PANE LAYOUT (No Album Art) ---
     if (trackChanged) {
-        display.fillRect(0, 0, SCREEN_WIDTH, 200, Colors::Black);
+        display.fillRect(0, 0, SCREEN_WIDTH, INFO_PANE_HEIGHT, Colors::Black);
         strlcpy(lastTrackName, sharedState.trackName, sizeof(lastTrackName));
 
-        // Track Title
-        display.drawTextInRegion(sharedState.trackName, 20, 20,
-                                  SCREEN_WIDTH - 40, 70,
+#if defined(USE_M5_LIBRARY)
+        display.drawTextInRegion(sharedState.trackName, 10, TRACK_TITLE_Y,
+                                  SCREEN_WIDTH - 20, TRACK_TITLE_H,
+                                  FONT_LARGE, Colors::White, Colors::Black);
+        display.drawTextInRegion(sharedState.artistName, 10, ARTIST_Y,
+                                  SCREEN_WIDTH - 20, ARTIST_H,
+                                  FONT_MEDIUM, Colors::Cyan, Colors::Black);
+        display.drawTextInRegion(sharedState.albumName, 10, ALBUM_Y,
+                                  SCREEN_WIDTH - 20, ALBUM_H,
+                                  FONT_MEDIUM, Colors::White, Colors::Black);
+#else
+        display.drawTextInRegion(sharedState.trackName, 10, TRACK_TITLE_Y,
+                                  SCREEN_WIDTH - 20, TRACK_TITLE_H,
                                   fontLarge(), Colors::White, Colors::Black);
-
-        // Artist Name
-        display.drawTextInRegion(sharedState.artistName, 20, 100,
-                                  SCREEN_WIDTH - 40, 50,
+        display.drawTextInRegion(sharedState.artistName, 10, ARTIST_Y,
+                                  SCREEN_WIDTH - 20, ARTIST_H,
                                   fontMedium(), Colors::Cyan, Colors::Black);
-
-        // Album Name
-        display.drawTextInRegion(sharedState.albumName, 20, 160,
-                                  SCREEN_WIDTH - 40, 30,
+        display.drawTextInRegion(sharedState.albumName, 10, ALBUM_Y,
+                                  SCREEN_WIDTH - 20, ALBUM_H,
                                   fontMedium(), Colors::White, Colors::Black);
+#endif
     }
 
     // Progress Bar
     if (sharedState.durationMS > 0) {
-        int barWidth = (sharedState.progressMS * 440) / sharedState.durationMS;
+        int barWidth = (sharedState.progressMS * SCREEN_WIDTH) / sharedState.durationMS;
 
         if (barWidth != lastBarWidth) {
             lastBarWidth = barWidth;
-            display.fillRect(20, 220, barWidth, 10, Colors::Green);
-            if (barWidth < 440) {
-                display.fillRect(20 + barWidth, 220, 440 - barWidth, 10, Colors::Grey);
-            }
+            display.drawProgressBar(sharedState.progressMS, sharedState.durationMS,
+                                     PROGRESS_BAR_Y, PROGRESS_BAR_H,
+                                     Colors::Green, Colors::Grey);
         }
     }
 
+    // --- STATUS BAR ---
+    bool deviceChanged = (strcmp(sharedState.deviceName, lastDeviceName) != 0);
+    bool volumeChanged = (sharedState.volumePercent != lastVolume);
+    bool playStateChanged = (sharedState.isPlaying != lastIsPlaying);
+
+    if (trackChanged) {
+        display.fillRect(0, STATUS_BAR_Y, SCREEN_WIDTH, STATUS_BAR_HEIGHT, Colors::Black);
+    }
+
     // Time display
-    char timeStr[16];
+    char timeStr[32];
     int curMin = sharedState.progressMS / 60000;
     int curSec = (sharedState.progressMS / 1000) % 60;
-    snprintf(timeStr, sizeof(timeStr), "%02d:%02d", curMin, curSec);
-    display.fillRect(20, 240, 80, 25, Colors::Black);
-    display.drawText(timeStr, 20, 240, fontMedium(), Colors::White);
-
-    bool playStateChanged = (sharedState.isPlaying != lastIsPlaying);
+    int totMin = sharedState.durationMS / 60000;
+    int totSec = (sharedState.durationMS / 1000) % 60;
+    snprintf(timeStr, sizeof(timeStr), "%02d:%02d / %02d:%02d", curMin, curSec, totMin, totSec);
+    display.fillRect(TIME_X, TIME_Y, 120, 25, Colors::Black);
+#if defined(USE_M5_LIBRARY)
+    display.drawText(timeStr, TIME_X, TIME_Y, FONT_SMALL, Colors::White);
+#else
+    display.drawText(timeStr, TIME_X, TIME_Y, fontSmall(), Colors::White);
+#endif
 
     if (playStateChanged || trackChanged) {
         lastIsPlaying = sharedState.isPlaying;
-        display.fillRect(400, 230, 40, 30, Colors::Black);
+        display.fillRect(PLAY_ICON_X - 10, STATUS_BAR_Y, 40, STATUS_BAR_HEIGHT, Colors::Black);
         if (sharedState.isPlaying) {
-            display.drawPlayIcon(400, 240, Colors::Green);
+            display.drawPlayIcon(PLAY_ICON_X, PLAY_ICON_Y, Colors::Green);
         } else {
-            display.drawPauseIcon(400, 240, Colors::White);
+            display.drawPauseIcon(PLAY_ICON_X, PLAY_ICON_Y, Colors::White);
         }
     }
 
     // Device info
-    if (strcmp(sharedState.deviceName, lastDeviceName) != 0 ||
-        sharedState.volumePercent != lastVolume) {
+    if (deviceChanged || volumeChanged || trackChanged) {
         strlcpy(lastDeviceName, sharedState.deviceName, sizeof(lastDeviceName));
         lastVolume = sharedState.volumePercent;
 
-        display.fillRect(0, 270, SCREEN_WIDTH, 20, Colors::Black);
+        display.fillRect(DEVICE_INFO_X - 20, STATUS_BAR_Y, SCREEN_WIDTH - DEVICE_INFO_X + 20, STATUS_BAR_HEIGHT, Colors::Black);
 
         char deviceInfo[128];
-        snprintf(deviceInfo, sizeof(deviceInfo), "%s [Vol %d%%]",
+        snprintf(deviceInfo, sizeof(deviceInfo), "%s [%d%%]",
                  sharedState.deviceName, sharedState.volumePercent);
-        display.drawText(deviceInfo, 20, 275, fontSmall(), Colors::White);
-    }
+#if defined(USE_M5_LIBRARY)
+        display.drawText(deviceInfo, DEVICE_INFO_X, DEVICE_INFO_Y, FONT_SMALL, Colors::White);
+#else
+        display.drawText(deviceInfo, DEVICE_INFO_X, DEVICE_INFO_Y, fontSmall(), Colors::White);
 #endif
+    }
+#endif  // FEATURE_ALBUM_ART
 }
 
 bool wakeUp() {
@@ -720,7 +778,11 @@ void configModeCallback(WiFiManager *myWiFiManager) {
 
 void connect_to_wifi() {
     display.clear(Colors::Black);
+#if defined(USE_M5_LIBRARY)
+    display.drawText("Connecting WiFi...", 10, 100, FONT_MEDIUM, Colors::White);
+#else
     display.drawText("Connecting WiFi...", 10, 100, fontMedium(), Colors::White);
+#endif
 
     WiFiManager wm;
     wm.setAPCallback(configModeCallback);
@@ -730,7 +792,11 @@ void connect_to_wifi() {
     }
 
     display.clear(Colors::Black);
+#if defined(USE_M5_LIBRARY)
+    display.drawText("WiFi Connected!", 10, 100, FONT_MEDIUM, Colors::White);
+#else
     display.drawText("WiFi Connected!", 10, 100, fontMedium(), Colors::White);
+#endif
     delay(1000);
 }
 
@@ -804,11 +870,17 @@ void spotifyTask(void * parameter) {
 void setup() {
     Serial.begin(115200);
     Serial.println("\n\n--- BOOT ---");
+    Serial.printf("Device: %s\n", DEVICE_NAME);
 
-#ifdef ENABLE_ALBUM_ART
+#if FEATURE_ALBUM_ART
     setCpuFrequencyMhz(240);
 #else
     setCpuFrequencyMhz(160);
+#endif
+
+#if defined(USE_M5_LIBRARY)
+    // M5Stack initialization - must be called before any display operations
+    M5.begin();
 #endif
 
     // 1. Init Hardware
@@ -825,16 +897,28 @@ void setup() {
     delay(250);
 
     display.clear(Colors::Black);
+#if defined(USE_M5_LIBRARY)
+    display.drawText("System Starting...", 10, 50, FONT_LARGE, Colors::White);
+#else
     display.drawText("System Starting...", 10, 50, fontLarge(), Colors::White);
+#endif
     delay(500);
 
-#ifdef ENABLE_ALBUM_ART
+#if FEATURE_ALBUM_ART
     jpgBuffer = (uint8_t*)malloc(JPG_BUFFER_SIZE);
     if (!jpgBuffer) {
+#if defined(USE_M5_LIBRARY)
+        display.drawText("RAM FAIL: No JPEG Buffer", 10, 100, FONT_MEDIUM, Colors::Red);
+#else
         display.drawText("RAM FAIL: No JPEG Buffer", 10, 100, fontMedium(), Colors::Red);
+#endif
         delay(2000);
     } else {
+#if defined(USE_M5_LIBRARY)
+        display.drawText("RAM OK", 10, 100, FONT_MEDIUM, Colors::Green);
+#else
         display.drawText("RAM OK", 10, 100, fontMedium(), Colors::Green);
+#endif
         delay(500);
     }
 #endif
@@ -1041,12 +1125,12 @@ void loop() {
     // 5. Update Display
     if (xSemaphoreTake(dataMutex, 0) == pdTRUE) {
         if (newDataAvailable) {
-#ifdef ENABLE_ALBUM_ART
+#if FEATURE_ALBUM_ART
             updateDisplay();
             if (strlen(sharedState.imageUrl) > 5 &&
                 strcmp(sharedState.imageUrl, lastImageUrl) != 0) {
                 strlcpy(lastImageUrl, sharedState.imageUrl, 256);
-                display.fillRect(RIGHT_PANE_X, 40, LEFT_PANE_WIDTH, LEFT_PANE_WIDTH, Colors::Black);
+                display.fillRect(INFO_PANE_X, 40, ALBUM_ART_SIZE, ALBUM_ART_SIZE, Colors::Black);
                 drawAlbumArt(sharedState.imageUrl);
             }
             newDataAvailable = false;
@@ -1057,4 +1141,9 @@ void loop() {
         }
         xSemaphoreGive(dataMutex);
     }
+
+#if defined(USE_M5_LIBRARY)
+    // M5Stack button update
+    M5.update();
+#endif
 }

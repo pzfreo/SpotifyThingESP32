@@ -3,33 +3,64 @@
 #include <Arduino.h>
 #include <SPI.h>
 
-#include "roo_display.h"
-#include "roo_display/driver/ili9488.h"
-#include "roo_display/color/color.h"
-#include "roo_display/shape/basic.h"
-#include "roo_display/shape/point.h"
-#include "roo_display/ui/text_label.h"
-#include "roo_display/font/font.h"
-#include "roo_display/core/orientation.h"
+// Include device configuration (selects device-specific settings)
+#include "config/device_config.h"
 
-#include "display_config.h"
+// ============================================================
+// === DISPLAY DRIVER INCLUDES ===
+// ============================================================
+#if defined(USE_M5_LIBRARY)
+    #include <M5Stack.h>
+    // M5Stack uses TFT_eSPI internally - we'll wrap it
+#else
+    // Use roo_display for custom displays
+    #include "roo_display.h"
+    #include "roo_display/color/color.h"
+    #include "roo_display/shape/basic.h"
+    #include "roo_display/shape/point.h"
+    #include "roo_display/ui/text_label.h"
+    #include "roo_display/font/font.h"
+    #include "roo_display/core/orientation.h"
 
-using namespace roo_display;
+    #if defined(DISPLAY_DRIVER_ILI9488)
+        #include "roo_display/driver/ili9488.h"
+    #endif
+
+    using namespace roo_display;
+#endif
 
 // ============================================================
 // === COLOR DEFINITIONS ===
 // ============================================================
+#if defined(USE_M5_LIBRARY)
+// M5Stack uses TFT_eSPI colors (16-bit RGB565)
+typedef uint16_t DisplayColor;
 namespace Colors {
-    constexpr Color Black   = color::Black;
-    constexpr Color White   = color::White;
-    constexpr Color Red     = color::Red;
-    constexpr Color Green   = color::Green;
-    constexpr Color Blue    = color::Blue;
-    constexpr Color Cyan    = color::Cyan;
-    constexpr Color Magenta = color::Magenta;
-    constexpr Color Orange  = color::Orange;
-    constexpr Color Grey    = Color(0x42, 0x42, 0x42);
+    constexpr DisplayColor Black   = TFT_BLACK;
+    constexpr DisplayColor White   = TFT_WHITE;
+    constexpr DisplayColor Red     = TFT_RED;
+    constexpr DisplayColor Green   = TFT_GREEN;
+    constexpr DisplayColor Blue    = TFT_BLUE;
+    constexpr DisplayColor Cyan    = TFT_CYAN;
+    constexpr DisplayColor Magenta = TFT_MAGENTA;
+    constexpr DisplayColor Orange  = TFT_ORANGE;
+    constexpr DisplayColor Grey    = 0x4208;  // RGB565 grey
 }
+#else
+// roo_display Color type
+typedef Color DisplayColor;
+namespace Colors {
+    constexpr DisplayColor Black   = color::Black;
+    constexpr DisplayColor White   = color::White;
+    constexpr DisplayColor Red     = color::Red;
+    constexpr DisplayColor Green   = color::Green;
+    constexpr DisplayColor Blue    = color::Blue;
+    constexpr DisplayColor Cyan    = color::Cyan;
+    constexpr DisplayColor Magenta = color::Magenta;
+    constexpr DisplayColor Orange  = color::Orange;
+    constexpr DisplayColor Grey    = Color(0x42, 0x42, 0x42);
+}
+#endif
 
 // ============================================================
 // === DISPLAY MANAGER CLASS ===
@@ -44,55 +75,70 @@ public:
     void setBacklight(bool on);
 
     // Basic drawing operations
-    void clear(Color bg = Colors::Black);
-    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, Color color);
-    void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, Color color);
+    void clear(DisplayColor bg = Colors::Black);
+    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, DisplayColor color);
+    void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, DisplayColor color);
 
     // Text rendering
-    void drawText(const char* text, int16_t x, int16_t y, const Font& font, Color color);
+#if defined(USE_M5_LIBRARY)
+    void drawText(const char* text, int16_t x, int16_t y, uint8_t size, DisplayColor color);
     void drawTextInRegion(const char* text, int16_t x, int16_t y, int16_t w, int16_t h,
-                          const Font& font, Color color, Color bgColor = Colors::Black);
+                          uint8_t size, DisplayColor color, DisplayColor bgColor = Colors::Black);
+#else
+    void drawText(const char* text, int16_t x, int16_t y, const Font& font, DisplayColor color);
+    void drawTextInRegion(const char* text, int16_t x, int16_t y, int16_t w, int16_t h,
+                          const Font& font, DisplayColor color, DisplayColor bgColor = Colors::Black);
+#endif
 
     // UI Components
     void drawProgressBar(int progress, int duration, int16_t y, int16_t height,
-                         Color activeColor, Color inactiveColor);
-    void drawPlayIcon(int16_t x, int16_t y, Color color);
-    void drawPauseIcon(int16_t x, int16_t y, Color color);
+                         DisplayColor activeColor, DisplayColor inactiveColor);
+    void drawPlayIcon(int16_t x, int16_t y, DisplayColor color);
+    void drawPauseIcon(int16_t x, int16_t y, DisplayColor color);
     void drawTriangle(int16_t x1, int16_t y1, int16_t x2, int16_t y2,
-                      int16_t x3, int16_t y3, Color color);
+                      int16_t x3, int16_t y3, DisplayColor color);
 
     // Popup/Modal
-    void showPopup(const char* text, Color textColor, Color bgColor = Colors::White);
+    void showPopup(const char* text, DisplayColor textColor, DisplayColor bgColor = Colors::White);
 
     // QR Code support
-    void drawQRModule(int16_t x, int16_t y, int16_t size, Color color);
+    void drawQRModule(int16_t x, int16_t y, int16_t size, DisplayColor color);
 
-    // Image rendering (JPEG callback support)
+#if FEATURE_ALBUM_ART
+    // Image rendering (JPEG callback support) - only for devices with album art
     void pushImage(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* data);
+#endif
 
-    // Get underlying display for advanced operations
+#if !defined(USE_M5_LIBRARY)
+    // Get underlying roo_display for advanced operations
     Display& getDisplay() { return display_; }
+#endif
 
 private:
-    // ILI9488 driver with CS=15, DC=21, RST=4
+#if defined(USE_M5_LIBRARY)
+    // M5Stack manages display internally via M5.Lcd
+#elif defined(DISPLAY_DRIVER_ILI9488)
+    // ILI9488 driver with configurable pins
     Ili9488spi<TFT_CS, TFT_DC, TFT_RST> device_;
     Display display_;
+#endif
 };
 
 // ============================================================
-// === FONTS FROM ROO_FONTS LIBRARY ===
+// === FONTS ===
 // ============================================================
+#if defined(USE_M5_LIBRARY)
+// M5Stack uses numeric font sizes
+constexpr uint8_t FONT_SMALL = 1;
+constexpr uint8_t FONT_MEDIUM = 2;
+constexpr uint8_t FONT_LARGE = 4;
+#else
 // Using roo_fonts library for anti-aliased fonts
-// Font sizes approximate to TFT_eSPI sizes:
-// Size 1 (~12px) - Small text for device info
-// Size 2 (~18px) - Medium text for artist/album
-// Size 3 (~27px) - Large text for track title
-
 #include "roo_fonts/NotoSans_Regular/12.h"
 #include "roo_fonts/NotoSans_Regular/18.h"
 #include "roo_fonts/NotoSans_Bold/27.h"
 
-// Font accessor functions
 inline const Font& fontSmall() { return font_NotoSans_Regular_12(); }
 inline const Font& fontMedium() { return font_NotoSans_Regular_18(); }
 inline const Font& fontLarge() { return font_NotoSans_Bold_27(); }
+#endif

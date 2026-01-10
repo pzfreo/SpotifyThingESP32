@@ -39,6 +39,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     needs: test  # Only build if tests pass
+    strategy:
+      matrix:
+        device:
+          - name: dev1_freenove
+            artifact: firmware-dev1-freenove
+          - name: m5stack_core
+            artifact: firmware-m5stack-core
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -49,9 +56,9 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.platformio/.cache
-          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          key: ${{ runner.os }}-pio-${{ matrix.device.name }}-${{ hashFiles('platformio.ini') }}
           restore-keys: |
-            ${{ runner.os }}-pio-
+            ${{ runner.os }}-pio-${{ matrix.device.name }}-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -63,14 +70,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
 
-      - name: Build Firmware
+      - name: Build Firmware (${{ matrix.device.name }})
         env:
           SPOTIFY_AUTH_KEY: ${{ secrets.SPOTIFY_AUTH_KEY }}
-        run: pio run -e freenove_esp32_wrover
+        run: pio run -e ${{ matrix.device.name }}
 
       - name: Upload Firmware Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: firmware
-          path: .pio/build/freenove_esp32_wrover/firmware.bin
+          name: ${{ matrix.device.artifact }}
+          path: .pio/build/${{ matrix.device.name }}/firmware.bin
           retention-days: 30
