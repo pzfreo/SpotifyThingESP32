@@ -18,8 +18,15 @@ void DisplayManager::init() {
     // Initialize the display
     display_.init(Colors::Black);
 
-    // Set landscape orientation (equivalent to rotation 1)
+    // Set landscape orientation
+    // M5Stack ILI9342C needs special orientation handling
+#if defined(DISPLAY_DRIVER_ILI9341)
+    // M5Stack: Use DownLeft orientation (equivalent to TFT_eSPI rotation 1)
+    display_.setOrientation(Orientation::DownLeft());
+#else
+    // dev1 ILI9488: Standard landscape
     display_.setOrientation(Orientation().rotateRight());
+#endif
 }
 
 void DisplayManager::hardwareReset() {
