@@ -313,10 +313,10 @@ void updateDisplay() {
 #else
         display.drawTextInRegion(sharedState.trackName, 10, 20,
                                   INFO_PANE_X - 20, TRACK_TITLE_H - 20,
-                                  fontTitle(), Colors::White, Colors::Black);
+                                  fontLarge(), Colors::White, Colors::Black);
         display.drawTextInRegion(sharedState.artistName, 10, ARTIST_Y + 10,
                                   INFO_PANE_X - 20, ARTIST_H - 10,
-                                  fontArtist(), Colors::Cyan, Colors::Black);
+                                  fontMedium(), Colors::Cyan, Colors::Black);
         display.drawTextInRegion(sharedState.albumName, 10, ALBUM_Y,
                                   INFO_PANE_X - 20, ALBUM_H,
                                   fontMedium(), Colors::White, Colors::Black);
@@ -418,7 +418,7 @@ void updateDisplay() {
                                   fontLarge(), Colors::White, Colors::Black);
         display.drawTextInRegion(sharedState.artistName, 10, ARTIST_Y,
                                   SCREEN_WIDTH - 20, ARTIST_H,
-                                  fontArtist(), Colors::Cyan, Colors::Black);
+                                  fontMedium(), Colors::Cyan, Colors::Black);
         display.drawTextInRegion(sharedState.albumName, 10, ALBUM_Y,
                                   SCREEN_WIDTH - 20, ALBUM_H,
                                   fontMedium(), Colors::White, Colors::Black);

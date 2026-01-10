@@ -9,6 +9,12 @@ def patch_roo_io(source, target, env):
     problematic_files = [
         os.path.join(libdeps_dir, env_name, "roo_io", "src", "roo_io", "fs", "esp32", "esp-idf", "sdmmc.cpp"),
         os.path.join(libdeps_dir, env_name, "roo_io", "src", "roo_io", "fs", "esp32", "esp-idf", "sdspi.cpp"),
+        os.path.join(libdeps_dir, env_name, "roo_io", "src", "roo_io", "fs", "esp32", "arduino", "sdmmc.cpp"),
+        os.path.join(libdeps_dir, env_name, "roo_io", "src", "roo_io", "fs", "esp32", "arduino", "sdmmc.h"),
+        os.path.join(libdeps_dir, env_name, "roo_io", "src", "roo_io", "fs", "esp32", "arduino", "sdspi.cpp"),
+        os.path.join(libdeps_dir, env_name, "roo_io", "src", "roo_io", "fs", "esp32", "arduino", "sdspi.h"),
+        os.path.join(libdeps_dir, env_name, "roo_io", "src", "roo_io", "fs", "arduino", "sdfs.cpp"),
+        os.path.join(libdeps_dir, env_name, "roo_io", "src", "roo_io", "fs", "arduino", "sdfs.h"),
     ]
 
     for filepath in problematic_files:
