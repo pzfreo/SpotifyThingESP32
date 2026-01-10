@@ -50,7 +50,7 @@ inline ComboAction determineComboActionOnRelease(unsigned long holdDurationMs) {
     if (holdDurationMs >= COMBO_LOGOUT_THRESHOLD_MS) {
         return ComboAction::RESET;
     }
-    if (holdDurationMs >= COMBO_NONE_THRESHOLD_MS) {
+    if (holdDurationMs > COMBO_NONE_THRESHOLD_MS) {
         return ComboAction::LOGOUT;
     }
     return ComboAction::NONE;

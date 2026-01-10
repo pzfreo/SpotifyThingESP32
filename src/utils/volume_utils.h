@@ -55,8 +55,8 @@ inline int calculateNewVolume(int currentVolume, int delta) {
 inline bool shouldRepeatVolumeChange(unsigned long buttonPressedAt,
                                      unsigned long lastRepeatAt,
                                      unsigned long now) {
-    // Check if initial hold delay has passed
-    if (now - buttonPressedAt < VOLUME_HOLD_DELAY_MS) {
+    // Check if initial hold delay has passed (must exceed, not equal)
+    if (now - buttonPressedAt <= VOLUME_HOLD_DELAY_MS) {
         return false;
     }
 
