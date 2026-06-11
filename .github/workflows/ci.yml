@@ -11,17 +11,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-pio
           restore-keys: ${{ runner.os }}-pip-
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -43,17 +43,17 @@ jobs:
             artifact: firmware-m5stack-core
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-pio
           restore-keys: ${{ runner.os }}-pip-
 
       - name: Cache PlatformIO core
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.platformio/packages
@@ -65,7 +65,7 @@ jobs:
             ${{ runner.os }}-pio-core-
 
       - name: Cache PlatformIO libraries
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .pio/libdeps
           key: ${{ runner.os }}-pio-libs-${{ matrix.device.name }}-${{ hashFiles('platformio.ini') }}
@@ -73,7 +73,7 @@ jobs:
             ${{ runner.os }}-pio-libs-${{ matrix.device.name }}-
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.ccache
           key: ${{ runner.os }}-ccache-${{ matrix.device.name }}-${{ github.sha }}
@@ -81,7 +81,7 @@ jobs:
             ${{ runner.os }}-ccache-${{ matrix.device.name }}-
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -108,7 +108,7 @@ jobs:
         run: ccache -s
 
       - name: Upload Firmware Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.device.artifact }}
           path: .pio/build/${{ matrix.device.name }}/firmware.bin
